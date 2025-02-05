@@ -9,24 +9,28 @@ import addFormats from "ajv-formats";
 import {CartaCommandLineOptions, CartaRuntimeConfig, CartaServerConfig} from "./types";
 
 const defaultConfigPath = "/etc/carta/config.json";
-const argv = yargs.options({
-    config: {
-        type: "string",
-        default: defaultConfigPath,
-        alias: "c",
-        description: "Path to config file in JSON format"
-    },
-    test: {
-        type: "string",
-        alias: "t",
-        requiresArg: true,
-        description: "Test configuration with the provided user"
-    },
-    verbose: {
-        type: "boolean",
-        alias: "v"
-    }
-}).argv as CartaCommandLineOptions;
+const argv = yargs
+    .parserConfiguration({
+        'short-option-groups': false,
+    })
+    .options({
+        config: {
+            type: "string",
+            default: defaultConfigPath,
+            alias: "c",
+            description: "Path to config file in JSON format"
+        },
+        test: {
+            type: "string",
+            alias: "t",
+            requiresArg: true,
+            description: "Test configuration with the provided user"
+        },
+        verbose: {
+            type: "boolean",
+            alias: "v"
+        }
+    }).argv as CartaCommandLineOptions;
 
 const usingCustomConfig = argv.config !== defaultConfigPath;
 const testUser = argv.test;
