@@ -501,13 +501,14 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
 	}
        
 	// Write the complete workspace JSON file (needed?)
-        //const workspaceJsonPath = path.join(workspaceFolder, "workspace.json");
-        //fs.writeFileSync(workspaceJsonPath, JSON.stringify(workspace, null, 2));
+        const workspaceJsonPath = path.join(workspaceFolder, "workspace.json");
+        fs.writeFileSync(workspaceJsonPath, JSON.stringify(workspace, null, 2));
+	console.log("Workspace JSON written to:", workspaceJsonPath);
 	
 	// Stage and commit the file.
-        //execSync("git add .", { cwd: workspaceFolder });
-        //const commitMessage = `Initial commit for workspace "${workspaceName}" by ${req.username}`;
-        //execSync(`git commit -m "${commitMessage}"`, { cwd: workspaceFolder });
+        execSync("git add .", { cwd: workspaceFolder });
+        const commitMessage = `Initial commit for workspace "${workspaceName}" by ${req.username}`;
+        execSync(`git commit -m "${commitMessage}"`, { cwd: workspaceFolder });
 
 	if (updateResult.ok && updateResult.value) {
             res.json({
