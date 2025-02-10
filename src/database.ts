@@ -6,11 +6,19 @@ import {authGuard} from "./auth";
 import {noCache, verboseError} from "./util";
 import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
+import * as fs from "fs";
+import * as path from "path";
+import { execSync } from "child_process";
+
 
 const PREFERENCE_SCHEMA_VERSION = 2;
 const LAYOUT_SCHEMA_VERSION = 2;
 const SNIPPET_SCHEMA_VERSION = 1;
 const WORKSPACE_SCHEMA_VERSION = 0;
+//new
+//const WORKSPACE_ROOT = "../src/data/workspaces"; //file system path
+const WORKSPACE_ROOT = path.resolve(__dirname, "../data/workspaces");
+
 const preferenceSchema = require("../config/preference_schema_2.json");
 const layoutSchema = require("../config/layout_schema_2.json");
 const snippetSchema = require("../config/snippet_schema.json");
@@ -27,6 +35,12 @@ let preferenceCollection: Collection;
 let layoutsCollection: Collection;
 let snippetsCollection: Collection;
 let workspacesCollection: Collection;
+
+// Helper: construct the file path for a given user's workspace.
+function getWorkspaceFolder(username: string, workspaceName: string): string {
+    return path.join(WORKSPACE_ROOT, username, workspaceName);
+}
+
 
 async function updateUsernameIndex(collection: Collection, unique: boolean) {
     const hasIndex = await collection.indexExists("username");
@@ -432,6 +446,89 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: express.R
     }
 }
 
+async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+    if (!req.username) {
+        return next({statusCode: 403, message: "Invalid username"});
+    }
+
+    if (!workspacesCollection) {
+        return next({statusCode: 501, message: "Database not configured"});
+    }
+
+    const workspaceName = req.body?.workspaceName;
+    const workspace = req.body?.workspace;
+    // Check for malformed update
+    if (!workspaceName || !workspace || workspace.workspaceVersion !== WORKSPACE_SCHEMA_VERSION) {
+        return next({statusCode: 400, message: "Malformed workspace update"});
+    }
+
+    const validUpdate = validateWorkspace(workspace);
+    if (!validUpdate) {
+        console.log(validateWorkspace.errors);
+        return next({statusCode: 400, message: "Malformed workspace update"});
+    }
+
+    try{
+    	//workspace record in the database
+	const updateResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: workspaceName}, {$set: {workspace}}, {upsert: true, returnDocument: "after"});
+	
+	//Create the workspace directory on disk.
+        const workspaceFolder = getWorkspaceFolder(req.username, workspaceName);
+        console.log("Computed workspace folder:", workspaceFolder);
+	
+	if (!fs.existsSync(workspaceFolder)) {
+            try{    
+	        fs.mkdirSync(workspaceFolder, { recursive: true });
+                console.log("Workspace folder created:", workspaceFolder);
+	    } catch (mkdirErr) {
+	    	console.error("Error creating workspace folder:", mkdirErr);
+            	return next({ statusCode: 500, message: "Error creating workspace folder" });
+	    }
+	}
+
+
+	// Initialize Git in this folder if not already initialized.
+        if (!fs.existsSync(path.join(workspaceFolder, ".git"))) {
+            try{
+		execSync("git init", { cwd: workspaceFolder });
+        	console.log("Git repository initialized in:", workspaceFolder);
+	    } catch (gitInitErr) {
+	    	console.error("Error initializing Git repo:", gitInitErr);
+	        return next({ statusCode: 500, message: "Error initializing Git repository" });
+
+	    }
+
+	}
+       
+	// Write the complete workspace JSON file (needed?)
+        //const workspaceJsonPath = path.join(workspaceFolder, "workspace.json");
+        //fs.writeFileSync(workspaceJsonPath, JSON.stringify(workspace, null, 2));
+	
+	// Stage and commit the file.
+        //execSync("git add .", { cwd: workspaceFolder });
+        //const commitMessage = `Initial commit for workspace "${workspaceName}" by ${req.username}`;
+        //execSync(`git commit -m "${commitMessage}"`, { cwd: workspaceFolder });
+
+	if (updateResult.ok && updateResult.value) {
+            res.json({
+                success: true,
+                workspace: {
+                    ...(workspace as any),
+                    id: updateResult.value._id.toString(),
+                    editable: true,
+                    name: workspaceName
+                }});
+            return;
+        } else {
+            return next({statusCode: 500, message: "Problem updating workspace"});
+	}
+          
+    } catch (err) {
+        verboseError(err);
+        return next({statusCode: 500, message: err.errmsg});
+    }
+
+}
 
 async function handleSetWorkspace(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
     if (!req.username) {
@@ -525,4 +622,6 @@ databaseRouter.get("/list/workspaces", authGuard, noCache, handleGetWorkspaceLis
 databaseRouter.get("/workspace/key/:key", authGuard, noCache, handleGetWorkspaceByKey);
 databaseRouter.get("/workspace/:name", authGuard, noCache, handleGetWorkspaceByName);
 databaseRouter.put("/workspace", authGuard, noCache, handleSetWorkspace);
+//new
+databaseRouter.put("/createWorkspace", authGuard, noCache, handleCreateWorkspace);
 databaseRouter.delete("/workspace", authGuard, noCache, handleClearWorkspace);
