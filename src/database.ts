@@ -586,7 +586,26 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: express.Respon
 
     try {
         const updateResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: workspaceName}, {$set: {workspace}}, {upsert: true, returnDocument: "after"});
-        if (updateResult.ok && updateResult.value) {
+        
+	// Compute the workspace folder path
+    	const workspaceFolder = getWorkspaceFolder(req.username, workspaceName);
+    	// Optionally verify the folder exists-it should exist if the workspace is open
+    	if (!fs.existsSync(workspaceFolder)) {
+      	    return next({ statusCode: 500, message: "Workspace folder not found" });
+    	}
+
+	// Write the updated workspace JSON file
+    	const workspaceJsonPath = path.join(workspaceFolder, "workspace.json");
+    	fs.writeFileSync(workspaceJsonPath, JSON.stringify(workspace, null, 2));
+    	console.log("Update workspace JSON written to:", workspaceJsonPath);
+	
+	// 4. Stage and commit the changes.
+	execSync("git add .", { cwd: workspaceFolder });
+    	const commitMessage = `Updated workspace "${workspaceName}" by ${req.username} at ${new Date().toISOString()}`;
+    	execSync(`git commit -m "${commitMessage}"`, { cwd: workspaceFolder });
+    	console.log("Git commit completed in:", workspaceFolder);
+
+	if (updateResult.ok && updateResult.value) {
             res.json({
                 success: true,
                 workspace: {
@@ -600,8 +619,8 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: express.Respon
             return next({statusCode: 500, message: "Problem updating workspace"});
         }
     } catch (err) {
-        verboseError(err);
-        return next({statusCode: 500, message: err.errmsg});
+        console.error("Error in handleSetWorkspace:", err);
+    	return next({ statusCode: 500, message: err.message || "Failed to save workspace" });
     }
 }
 
@@ -653,7 +672,7 @@ databaseRouter.post("/share/workspace/:id", authGuard, noCache, handleShareWorks
 databaseRouter.get("/list/workspaces", authGuard, noCache, handleGetWorkspaceList);
 databaseRouter.get("/workspace/key/:key", authGuard, noCache, handleGetWorkspaceByKey);
 databaseRouter.get("/workspace/:name", authGuard, noCache, handleGetWorkspaceByName);
-databaseRouter.put("/workspace", authGuard, noCache, handleSetWorkspace);
+databaseRouter.put("/setWorkspace", authGuard, noCache, handleSetWorkspace);
 //new
 databaseRouter.put("/createWorkspace", authGuard, noCache, handleCreateWorkspace);
 databaseRouter.delete("/workspace", authGuard, noCache, handleClearWorkspace);
