@@ -361,7 +361,21 @@ async function handleClearWorkspace(req: AuthenticatedRequest, res: express.Resp
     try {
         const deleteResult = await workspacesCollection.deleteOne({username: req.username, name: workspaceName});
         if (deleteResult.acknowledged) {
-            res.json({success: true});
+            // Determine the workspace folder path.
+      	    const workspaceFolder = getWorkspaceFolder(req.username, workspaceName);
+      	    console.log("Deleting workspace folder:", workspaceFolder);
+	
+	    // Attempt to remove the workspace folder (and its .git repo) recursively.
+      	    try {
+        	fs.rmSync(workspaceFolder, { recursive: true, force: true });
+        	console.log("Workspace folder deleted successfully:", workspaceFolder);
+      	    } catch (fsErr) {
+        	console.error("Error deleting workspace folder:", fsErr);
+        	// Optionally, you could return an error here if folder deletion is critical.
+        	// For now, we'll log the error and still return success.
+      	    }    	
+
+	    res.json({success: true});
         } else {
             return next({statusCode: 500, message: "Problem clearing workspace"});
         }
