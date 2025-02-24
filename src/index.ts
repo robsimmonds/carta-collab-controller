@@ -1,15 +1,15 @@
-import * as express from "express";
+import express, {Request, Response, NextFunction} from 'express';
 import * as bodyParser from "body-parser";
-import * as bearerToken from "express-bearer-token";
-import * as cookieParser from "cookie-parser";
-import * as httpProxy from "http-proxy";
+import bearerToken from "express-bearer-token";
+import cookieParser from "cookie-parser";
+import httpProxy from "http-proxy";
 import * as http from "http";
 import * as url from "url";
-import * as cors from "cors";
+import cors from "cors";
 import * as fs from "fs";
 import * as path from "path";
-import * as compression from "compression";
-import * as chalk from "chalk";
+import compression from "compression";
+import chalk from "chalk";
 import {createScriptingProxyHandler, createUpgradeHandler, serverRouter} from "./serverHandlers";
 import {authGuard, authRouter} from "./auth";
 import {databaseRouter, initDB} from "./database";
@@ -42,12 +42,12 @@ if (testUser) {
     app.use(`${RuntimeConfig.apiAddress}/server`, bodyParser.json(), serverRouter);
     app.use(`${RuntimeConfig.apiAddress}/database`, bodyParser.json(), databaseRouter);
 
-    app.use("/config", (req: express.Request, res: express.Response) => {
+    app.use("/config", (req: Request, res: Response) => {
         return res.json(RuntimeConfig);
     });
 
     // Prevent caching of the frontend HTML code
-    const staticHeaderHandler = (res: express.Response, path: string) => {
+    const staticHeaderHandler = (res: Response, path: string) => {
         if (path.endsWith(".html")) {
             res.setHeader("Cache-Control", "no-cache");
         }
@@ -107,7 +107,7 @@ if (testUser) {
     app.post(`${RuntimeConfig.apiAddress}/scripting/*`, authGuard, createScriptingProxyHandler(backendProxy));
 
     // Simplified error handling
-    app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    app.use((err: any, req: Request, res: Response, next: NextFunction) => {
         err.statusCode = err.statusCode || 500;
         err.status = err.status || "error";
 

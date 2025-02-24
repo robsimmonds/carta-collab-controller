@@ -1,10 +1,10 @@
 import * as path from "path";
 import * as fs from "fs";
 import {MongoClient} from "mongodb";
-import * as LdapAuth from "ldapauth-fork";
+import LdapAuth from "ldapauth-fork";
 import * as logSymbols from "log-symbols";
-import * as chalk from "chalk";
-import * as moment from "moment";
+import chalk from "chalk";
+import moment from "moment";
 import {ServerConfig, testUser} from "./config";
 import {ChildProcess, spawn, spawnSync} from "child_process";
 import {delay, getUserId, verboseError, verboseLog} from "./util";
@@ -12,7 +12,7 @@ import {client} from "websocket";
 import {CartaLdapAuthConfig, CartaLocalAuthConfig} from "./types";
 import {generateToken, TokenType} from "./auth/local";
 
-const read = require("read");
+import read = require("read");
 
 export async function runTests(username: string) {
     console.log(`Testing configuration with user ${chalk.bold(testUser)}`);
