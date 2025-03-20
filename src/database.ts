@@ -17,7 +17,8 @@ const SNIPPET_SCHEMA_VERSION = 1;
 const WORKSPACE_SCHEMA_VERSION = 0;
 //new
 //const WORKSPACE_ROOT = "../src/data/workspaces"; //file system path
-const WORKSPACE_ROOT = path.resolve(__dirname, "../data/workspaces");
+const WORKSPACE_ROOT = path.resolve(__dirname, "../data/workspaces"); //absolute path
+
 
 const preferenceSchema = require("../config/preference_schema_2.json");
 const layoutSchema = require("../config/layout_schema_2.json");
@@ -37,8 +38,8 @@ let snippetsCollection: Collection;
 let workspacesCollection: Collection;
 
 // Helper: construct the file path for a given user's workspace.
-function getWorkspaceFolder(username: string, workspaceName: string): string {
-    return path.join(WORKSPACE_ROOT, username, workspaceName);
+function getWorkspaceFolder(username: string, workspaceId: string): string {
+	return path.join(WORKSPACE_ROOT, username, workspaceId);
 }
 
 
@@ -359,10 +360,19 @@ async function handleClearWorkspace(req: AuthenticatedRequest, res: express.Resp
     const workspaceId = req.body?.id;
 
     try {
-        const deleteResult = await workspacesCollection.deleteOne({username: req.username, name: workspaceName});
-        if (deleteResult.acknowledged) {
+        const deleteResult = await workspacesCollection.findOneAndDelete({username: req.username, name: workspaceName});
+        
+	if (!deleteResult.value) {
+  		// No document was found to delete.
+		return next({ statusCode: 404, message: "Workspace not found" });
+	}
+
+	// Extract ID
+	const workspaceId = deleteResult.value._id.toString();
+
+	if (deleteResult.ok && deleteResult.value) {
             // Determine the workspace folder path.
-      	    const workspaceFolder = getWorkspaceFolder(req.username, workspaceName);
+      	    const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
       	    console.log("Deleting workspace folder:", workspaceFolder);
 	
 	    // Attempt to remove the workspace folder (and its .git repo) recursively.
@@ -471,6 +481,7 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
 
     const workspaceName = req.body?.workspaceName;
     const workspace = req.body?.workspace;
+
     // Check for malformed update
     if (!workspaceName || !workspace || workspace.workspaceVersion !== WORKSPACE_SCHEMA_VERSION) {
         return next({statusCode: 400, message: "Malformed workspace update"});
@@ -482,16 +493,19 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
         return next({statusCode: 400, message: "Malformed workspace update"});
     }
 	
-	
+    //use id instead of name for folder creation allowing name change
+    const workspaceId = new ObjectId().toString();	
+
     let workspaceFolder: string;
     try{
     	//Create the workspace directory on disk.
-        workspaceFolder = getWorkspaceFolder(req.username, workspaceName);
+        workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
         console.log("Computed workspace folder:", workspaceFolder);
 	
 	if (!fs.existsSync(workspaceFolder)) {
             fs.mkdirSync(workspaceFolder, { recursive: true });
             console.log("Workspace folder created:", workspaceFolder);
+	    console.log("workspace Id", workspaceId);
 	    
 	} else {
 	    console.log("Workspace folder already exists:", workspaceFolder);
@@ -524,14 +538,14 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
     //Only if git functionalities successful    
     try{
 	//workspace record in the database
-        const updateResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: workspaceName}, {$set: {workspace}}, {upsert: true, returnDocument: "after"});
+        const updateResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: workspaceName}, {$set: {workspace}, $setOnInsert: { _id: workspaceId}}, {upsert: true, returnDocument: "after"});
 	
 	if (updateResult.ok && updateResult.value) {
             res.json({
                 success: true,
                 workspace: {
                     ...(workspace as any),
-                    id: updateResult.value._id.toString(),
+                    id: workspaceId, //using custom id
                     editable: true,
                     name: workspaceName
                 }});
@@ -573,6 +587,7 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: express.Respon
 
     const workspaceName = req.body?.workspaceName;
     const workspace = req.body?.workspace;
+
     // Check for malformed update
     if (!workspaceName || !workspace || workspace.workspaceVersion !== WORKSPACE_SCHEMA_VERSION) {
         return next({statusCode: 400, message: "Malformed workspace update"});
@@ -586,9 +601,14 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: express.Respon
 
     try {
         const updateResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: workspaceName}, {$set: {workspace}}, {upsert: true, returnDocument: "after"});
-        
+       
+       	if (!updateResult.value) {
+    		return next({ statusCode: 500, message: "Workspace update failed: no document returned" });
+}
+	// Get the workspace id from the database result
+        const workspaceId = updateResult.value._id.toString();
 	// Compute the workspace folder path
-    	const workspaceFolder = getWorkspaceFolder(req.username, workspaceName);
+    	const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
     	// Optionally verify the folder exists-it should exist if the workspace is open
     	if (!fs.existsSync(workspaceFolder)) {
       	    return next({ statusCode: 500, message: "Workspace folder not found" });
