@@ -9,6 +9,11 @@ import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+// Promisify exec for asynchronous Git operations.
+const execAsync = promisify(exec);
 
 
 const PREFERENCE_SCHEMA_VERSION = 2;
@@ -377,7 +382,7 @@ async function handleClearWorkspace(req: AuthenticatedRequest, res: express.Resp
 	
 	    // Attempt to remove the workspace folder (and its .git repo) recursively.
       	    try {
-        	fs.rmSync(workspaceFolder, { recursive: true, force: true });
+        	await fs.promises.rm(workspaceFolder, { recursive: true, force: true });
         	console.log("Workspace folder deleted successfully:", workspaceFolder);
       	    } catch (fsErr) {
         	console.error("Error deleting workspace folder:", fsErr);
@@ -420,7 +425,7 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: express.
     }
 
     if (!req.params?.name) {
-        return next({statusCode: 403, message: "Invalid workspace name"});
+	    return next({statusCode: 403, message: "Invalid workspace name"});
     }
 
     if (!workspacesCollection) {
@@ -502,32 +507,36 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
         workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
         console.log("Computed workspace folder:", workspaceFolder);
 	
-	if (!fs.existsSync(workspaceFolder)) {
-            fs.mkdirSync(workspaceFolder, { recursive: true });
-            console.log("Workspace folder created:", workspaceFolder);
-	    console.log("workspace Id", workspaceId);
+	try {
+       	    await fs.promises.access(workspaceFolder, fs.constants.F_OK) 
+            console.log("Workspace folder already exists:", workspaceFolder);
 	    
-	} else {
-	    console.log("Workspace folder already exists:", workspaceFolder);
+	} catch {
+	    await fs.promises.mkdir(workspaceFolder, { recursive: true });
+	    console.log("Workspace folder created:", workspaceFolder);
+            console.log("workspace Id", workspaceId);
 	}
     	
 	// Initialize Git in this folder if not already initialized.
-        if (!fs.existsSync(path.join(workspaceFolder, ".git"))) {
-            execSync("git init", { cwd: workspaceFolder });
+	const gitFolder = path.join(workspaceFolder, ".git");
+
+	try{
+	    await fs.promises.access(gitFolder, fs.constants.F_OK);
+            console.log("Git repository already exists in:", workspaceFolder);
+        } catch {
+	    await execAsync("git init", { cwd: workspaceFolder });
             console.log("Git repository initialized in:", workspaceFolder);
-        } else {
-	    console.log("Git repository already exists in:", workspaceFolder);
 	}
 
     	// Write the workspace JSON file 
         const workspaceJsonPath = path.join(workspaceFolder, "workspace.json");
-        fs.writeFileSync(workspaceJsonPath, JSON.stringify(workspace, null, 2))
+        await fs.promises.writeFile(workspaceJsonPath, JSON.stringify(workspace, null, 2));
    	console.log("Workspace JSON written to:", workspaceJsonPath);
     	
 	// Stage and commit the file.
-        execSync("git add .", { cwd: workspaceFolder });
+        await execAsync("git add .", { cwd: workspaceFolder });
         const commitMessage = `Initial commit for workspace "${workspaceName}" by ${req.username}`;
-        execSync(`git commit -m "${commitMessage}"`, { cwd: workspaceFolder });
+        await execAsync(`git commit -m "${commitMessage}"`, { cwd: workspaceFolder });
     	console.log("Git commit completed in:", workspaceFolder);
 
     } catch (fsOrGitError: any) {
@@ -554,7 +563,7 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
       	    // If the DB update fails, roll back the Git operations by removing the folder.
             console.error("Database update failed; rolling back file system changes.");
             try {
-                fs.rmSync(workspaceFolder, { recursive: true, force: true });
+                await fs.promises.rm(workspaceFolder, { recursive: true, force: true });
                 console.log("Workspace folder removed:", workspaceFolder);
             } catch (rollbackErr) {
                 console.error("Rollback failed:", rollbackErr);
@@ -566,7 +575,7 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
         console.error("Database error:", dbError);
         // Roll back the Git operations if needed.
         try {
-            fs.rmSync(workspaceFolder, { recursive: true, force: true });
+            await fs.promises.rm(workspaceFolder, { recursive: true, force: true });
             console.log("Workspace folder removed due to DB error:", workspaceFolder);
         } catch (rollbackErr) {
             console.error("Rollback failed:", rollbackErr);
@@ -610,19 +619,22 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: express.Respon
 	// Compute the workspace folder path
     	const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
     	// Optionally verify the folder exists-it should exist if the workspace is open
-    	if (!fs.existsSync(workspaceFolder)) {
+    	try {
+	    await fs.promises.access(workspaceFolder, fs.constants.F_OK);
+	    
+	} catch {	    
       	    return next({ statusCode: 500, message: "Workspace folder not found" });
     	}
 
 	// Write the updated workspace JSON file
     	const workspaceJsonPath = path.join(workspaceFolder, "workspace.json");
-    	fs.writeFileSync(workspaceJsonPath, JSON.stringify(workspace, null, 2));
+    	await fs.promises.writeFile(workspaceJsonPath, JSON.stringify(workspace, null, 2));
     	console.log("Update workspace JSON written to:", workspaceJsonPath);
 	
-	// 4. Stage and commit the changes.
-	execSync("git add .", { cwd: workspaceFolder });
+	// Stage and commit the changes.
+	await execAsync("git add .", { cwd: workspaceFolder });
     	const commitMessage = `Updated workspace "${workspaceName}" by ${req.username} at ${new Date().toISOString()}`;
-    	execSync(`git commit -m "${commitMessage}"`, { cwd: workspaceFolder });
+    	await execAsync(`git commit -m "${commitMessage}"`, { cwd: workspaceFolder });
     	console.log("Git commit completed in:", workspaceFolder);
 
 	if (updateResult.ok && updateResult.value) {
