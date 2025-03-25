@@ -11,6 +11,8 @@ import * as path from "path";
 import { execSync } from "child_process";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder } from "./workspaceUtils";
+
 
 // Promisify exec for asynchronous Git operations.
 const execAsync = promisify(exec);
@@ -381,14 +383,7 @@ async function handleClearWorkspace(req: AuthenticatedRequest, res: express.Resp
       	    console.log("Deleting workspace folder:", workspaceFolder);
 	
 	    // Attempt to remove the workspace folder (and its .git repo) recursively.
-      	    try {
-        	await fs.promises.rm(workspaceFolder, { recursive: true, force: true });
-        	console.log("Workspace folder deleted successfully:", workspaceFolder);
-      	    } catch (fsErr) {
-        	console.error("Error deleting workspace folder:", fsErr);
-        	// Optionally, you could return an error here if folder deletion is critical.
-        	// For now, we'll log the error and still return success.
-      	    }    	
+      	    await deleteWorkspaceFolder(workspaceFolder);   	
 
 	    res.json({success: true});
         } else {
@@ -503,41 +498,23 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
 
     let workspaceFolder: string;
     try{
-    	//Create the workspace directory on disk.
+    	//Compute the workspace directory path on disk.
         workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
         console.log("Computed workspace folder:", workspaceFolder);
 	
-	try {
-       	    await fs.promises.access(workspaceFolder, fs.constants.F_OK) 
-            console.log("Workspace folder already exists:", workspaceFolder);
-	    
-	} catch {
-	    await fs.promises.mkdir(workspaceFolder, { recursive: true });
-	    console.log("Workspace folder created:", workspaceFolder);
-            console.log("workspace Id", workspaceId);
-	}
+	// Create workspace if it neccessary
+	await createFolderIfNotExists(workspaceFolder);
     	
 	// Initialize Git in this folder if not already initialized.
-	const gitFolder = path.join(workspaceFolder, ".git");
-
-	try{
-	    await fs.promises.access(gitFolder, fs.constants.F_OK);
-            console.log("Git repository already exists in:", workspaceFolder);
-        } catch {
-	    await execAsync("git init", { cwd: workspaceFolder });
-            console.log("Git repository initialized in:", workspaceFolder);
-	}
+	await initializeGitRepository(workspaceFolder);
 
     	// Write the workspace JSON file 
         const workspaceJsonPath = path.join(workspaceFolder, "workspace.json");
-        await fs.promises.writeFile(workspaceJsonPath, JSON.stringify(workspace, null, 2));
-   	console.log("Workspace JSON written to:", workspaceJsonPath);
+   	await writeJsonFile(workspaceJsonPath, workspace);
     	
 	// Stage and commit the file.
-        await execAsync("git add .", { cwd: workspaceFolder });
         const commitMessage = `Initial commit for workspace "${workspaceName}" by ${req.username}`;
-        await execAsync(`git commit -m "${commitMessage}"`, { cwd: workspaceFolder });
-    	console.log("Git commit completed in:", workspaceFolder);
+	await stageAndCommit(workspaceFolder, commitMessage);
 
     } catch (fsOrGitError: any) {
     	console.error("Error during file system/Git operations:", fsOrGitError);
@@ -562,25 +539,16 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
 	} else {
       	    // If the DB update fails, roll back the Git operations by removing the folder.
             console.error("Database update failed; rolling back file system changes.");
-            try {
-                await fs.promises.rm(workspaceFolder, { recursive: true, force: true });
-                console.log("Workspace folder removed:", workspaceFolder);
-            } catch (rollbackErr) {
-                console.error("Rollback failed:", rollbackErr);
-            }
-            return next({ statusCode: 500, message: "Problem updating workspace in database" });
+            await rollbackWorkspaceFolder(workspaceFolder);
+	    return next({ statusCode: 500, message: "Problem updating workspace in database" });
         }
           
     } catch (dbError: any) {
         console.error("Database error:", dbError);
-        // Roll back the Git operations if needed.
-        try {
-            await fs.promises.rm(workspaceFolder, { recursive: true, force: true });
-            console.log("Workspace folder removed due to DB error:", workspaceFolder);
-        } catch (rollbackErr) {
-            console.error("Rollback failed:", rollbackErr);
-        }
-        return next({ statusCode: 500, message: dbError.message || "Failed to update workspace in database" });
+        console.error("Rolling back file system changes.", dbError);
+	// Roll back the Git operations if needed.
+        await rollbackWorkspaceFolder(workspaceFolder);
+	return next({ statusCode: 500, message: dbError.message || "Failed to update workspace in database" });
     }
 
 }
@@ -614,28 +582,26 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: express.Respon
        	if (!updateResult.value) {
     		return next({ statusCode: 500, message: "Workspace update failed: no document returned" });
 }
-	// Get the workspace id from the database result
+	// Get the workspace id from the DB result and compute the workspace folder path.
         const workspaceId = updateResult.value._id.toString();
-	// Compute the workspace folder path
     	const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
-    	// Optionally verify the folder exists-it should exist if the workspace is open
+    	
+	// Verify the folder exists-it should exist if the workspace is open
     	try {
-	    await fs.promises.access(workspaceFolder, fs.constants.F_OK);
-	    
-	} catch {	    
-      	    return next({ statusCode: 500, message: "Workspace folder not found" });
-    	}
+            await ensureFolderExists(workspaceFolder);
+        } catch { 
+            return next({ statusCode: 500, message: "Workspace folder not found" });
+        }
+
 
 	// Write the updated workspace JSON file
     	const workspaceJsonPath = path.join(workspaceFolder, "workspace.json");
-    	await fs.promises.writeFile(workspaceJsonPath, JSON.stringify(workspace, null, 2));
-    	console.log("Update workspace JSON written to:", workspaceJsonPath);
+    	await writeJsonFile(workspaceJsonPath, workspace);
+	console.log("Update workspace JSON written to:", workspaceJsonPath);
 	
 	// Stage and commit the changes.
-	await execAsync("git add .", { cwd: workspaceFolder });
-    	const commitMessage = `Updated workspace "${workspaceName}" by ${req.username} at ${new Date().toISOString()}`;
-    	await execAsync(`git commit -m "${commitMessage}"`, { cwd: workspaceFolder });
-    	console.log("Git commit completed in:", workspaceFolder);
+	const commitMessage = `Updated workspace "${workspaceName}" by ${req.username} at ${new Date().toISOString()}`;
+       	await stageAndCommit(workspaceFolder, commitMessage);
 
 	if (updateResult.ok && updateResult.value) {
             res.json({
