@@ -1,10 +1,10 @@
 import * as path from "path";
 import * as fs from "fs";
 import {MongoClient} from "mongodb";
-import * as LdapAuth from "ldapauth-fork";
+import LdapAuth from "ldapauth-fork";
 import * as logSymbols from "log-symbols";
-import * as chalk from "chalk";
-import * as moment from "moment";
+import chalk from "chalk";
+import moment from "moment";
 import {ServerConfig, testUser} from "./config";
 import {ChildProcess, spawn, spawnSync} from "child_process";
 import {delay, getUserId, verboseError, verboseLog} from "./util";
@@ -12,7 +12,7 @@ import {client} from "websocket";
 import {CartaLdapAuthConfig, CartaLocalAuthConfig} from "./types";
 import {generateToken, TokenType} from "./auth/local";
 
-const read = require("read");
+import read = require("read");
 
 export async function runTests(username: string) {
     console.log(`Testing configuration with user ${chalk.bold(testUser)}`);
@@ -121,9 +121,6 @@ function testUid(username: string) {
         verboseError(e);
         throw new Error(`Cannot verify uid of user ${username}`);
     }
-    if (!uid) {
-        throw new Error(`Cannot verify uid of user ${username}`);
-    }
     console.log(logSymbols.success, `Verified uid (${uid}) for user ${username}`);
 }
 
@@ -133,10 +130,10 @@ function testToken(authConf: CartaLocalAuthConfig, username: string) {
         token = generateToken(authConf, username, TokenType.Access);
     } catch (e) {
         verboseError(e);
-        throw new Error(`Cannot generate access token. Please check your config file's ldap auth section!`);
+        throw new Error("Cannot generate access token. Please check your config file's auth section!");
     }
     if (!token) {
-        throw new Error(`Cannot generate access token. Please check your config file's ldap auth section!`);
+        throw new Error("Invalid access token. Please check your config file's auth section!");
     }
     console.log(logSymbols.success, `Generated access token for user ${username}`);
 }
@@ -155,7 +152,7 @@ function testFrontend() {
     }
 
     if (!indexContents) {
-        throw new Error(`Cannot access frontend at ${ServerConfig.frontendPath}`);
+        throw new Error(`Invalid frontend at ${ServerConfig.frontendPath}`);
     } else {
         console.log(logSymbols.success, `Read frontend index.html from ${ServerConfig.frontendPath}`);
     }
@@ -211,6 +208,9 @@ async function testBackendStartup(username: string) {
     wsClient.on("connect", () => {
         wsConnected = true;
     });
+    wsClient.on("connectFailed", (e) => {
+        verboseError(e);
+    });
 
     wsClient.connect(`ws://localhost:${port}`);
     await delay(1000);
@@ -229,7 +229,12 @@ async function testKillScript(username: string, existingProcess: ChildProcess) {
     }
     const args = ["-u", `${username}`, ServerConfig.killCommand, `${existingProcess.pid}`];
     verboseLog(`running sudo ${args.join(" ")}`);
-    const res = spawnSync("sudo", args);
+    const res = spawnSync("sudo", args, { encoding : 'utf8' });
+    if (res.error) {
+        verboseError(res.error);
+        verboseError(`stdout:\t${res.stdout}`)
+        verboseError(`stderr:\t${res.stderr}`)
+    }
     if (res.status) {
         throw new Error(`Cannot execute kill script (error status ${res.status}. Please check your killCommand option`);
     }

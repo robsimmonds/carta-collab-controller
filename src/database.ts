@@ -1,4 +1,4 @@
-import * as express from "express";
+import express, {NextFunction, Response} from "express";
 import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import {Collection, Db, MongoClient, ObjectId} from "mongodb";
@@ -97,7 +97,7 @@ export async function initDB() {
     }
 }
 
-async function handleGetPreferences(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleGetPreferences(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -119,7 +119,7 @@ async function handleGetPreferences(req: AuthenticatedRequest, res: express.Resp
     }
 }
 
-async function handleSetPreferences(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleSetPreferences(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -155,7 +155,7 @@ async function handleSetPreferences(req: AuthenticatedRequest, res: express.Resp
     }
 }
 
-async function handleClearPreferences(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleClearPreferences(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -188,7 +188,7 @@ async function handleClearPreferences(req: AuthenticatedRequest, res: express.Re
     }
 }
 
-async function handleGetLayouts(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleGetLayouts(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -212,7 +212,7 @@ async function handleGetLayouts(req: AuthenticatedRequest, res: express.Response
     }
 }
 
-async function handleSetLayout(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleSetLayout(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -247,7 +247,7 @@ async function handleSetLayout(req: AuthenticatedRequest, res: express.Response,
     }
 }
 
-async function handleClearLayout(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleClearLayout(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -270,7 +270,7 @@ async function handleClearLayout(req: AuthenticatedRequest, res: express.Respons
     }
 }
 
-async function handleGetSnippets(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleGetSnippets(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -294,7 +294,7 @@ async function handleGetSnippets(req: AuthenticatedRequest, res: express.Respons
     }
 }
 
-async function handleSetSnippet(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleSetSnippet(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -329,7 +329,7 @@ async function handleSetSnippet(req: AuthenticatedRequest, res: express.Response
     }
 }
 
-async function handleClearSnippet(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleClearSnippet(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -353,7 +353,7 @@ async function handleClearSnippet(req: AuthenticatedRequest, res: express.Respon
 }
 
 
-async function handleClearWorkspace(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleClearWorkspace(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -395,7 +395,7 @@ async function handleClearWorkspace(req: AuthenticatedRequest, res: express.Resp
     }
 }
 
-async function handleGetWorkspaceList(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleGetWorkspaceList(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -414,7 +414,7 @@ async function handleGetWorkspaceList(req: AuthenticatedRequest, res: express.Re
     }
 }
 
-async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -441,7 +441,7 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: express.
 }
 
 
-async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -553,7 +553,7 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
 
 }
 
-async function handleSetWorkspace(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
@@ -623,7 +623,7 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: express.Respon
 }
 
 
-async function handleShareWorkspace(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+async function handleShareWorkspace(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
     }
