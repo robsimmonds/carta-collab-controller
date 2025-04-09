@@ -631,52 +631,28 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
     }
 
     const sourceWorkspaceName = req.body?.workspaceName;
-    //const sourceWorkspace = req.body?.workspace;
-    
-    console.log("All good with source bodys");
-    //fine till here
-    
-    console.log(sourceWorkspaceName)
-
-    // Validate required fields and version.
-    /*
-    if (!sourceWorkspaceName || sourceWorkspace.workspaceVersion !== WORKSPACE_SCHEMA_VERSION) {
-        console.log("valiDate return")
-	return next({ statusCode: 400, message: "Malformed workspace update" });
-    }  
-
-    
-    const validUpdate = validateWorkspace(sourceWorkspace);
-    if (!validUpdate) {
-        console.log(validateWorkspace.errors);
-        return next({ statusCode: 400, message: "Malformed workspace update" });
-    }
-    */
-    //console.log("All good with checks");
-
+   
     try {
         // 1. Look up the source workspace record
         const sourceRecord = await workspacesCollection.findOne({ username: req.username, name: sourceWorkspaceName });
         if (!sourceRecord) {
             return next({ statusCode: 404, message: "Source workspace not found" });
         }
-        console.log("source workspace found");
-	console.log("source workspace id: ",sourceRecord._id)
+        console.log("source workspace found");	
+	
+	//get Id of source workspace to get
 	const sourceWorkspaceId = sourceRecord._id.toString();
-	//console.log("source workspace id: ",sourceWorkspaceId)
+
 	//surely we can get the workspace itself from the db?
-	//const clonedWorkspace = sourceWorkspace;
+	const clonedWorkspace = { ...sourceRecord.workspace };
         const newWorkspaceId = new ObjectId().toString();
 	const newWorkspaceName = "clone"+sourceWorkspaceName;
 
         // 2. Compute folder paths.
         const sourceFolder = getWorkspaceFolder(req.username, sourceWorkspaceId);
         const destinationFolder = getWorkspaceFolder(req.username, newWorkspaceId);
-	console.log("folders done");
-	console.log(sourceFolder) 
-	console.log(destinationFolder)
 
-        // Ensure the destination folder does not exist.
+	// Ensure the destination folder does not exist.
         if (fs.existsSync(destinationFolder)) {
             return next({ statusCode: 409, message: "Destination workspace already exists" });
         }
@@ -686,25 +662,28 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
         execSync(`git clone "${sourceFolder}" "${destinationFolder}"`, { stdio: "inherit" });
         console.log("Workspace cloned from", sourceFolder, "to", destinationFolder);
 	console.log("All good with clones");
-        
-	//workspace record in the database
-        /*
+       
+		
+	//Too messy fix it
+	
+	// Insert a new document into the workspaces collection with the new name and cloned workspace data.	
 	const insertResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: newWorkspaceName}, {$set: {clonedWorkspace}, $setOnInsert: { _id: newWorkspaceId}}, {upsert: true, returnDocument: "after"});
-	console.log("All good with database");
-        // 6. Return the cloned workspace.
-        if (insertResult.ok && insertResult.value) {
-	    console.log("Workspace cloned and added to database");
+	
+	if (insertResult.ok && insertResult.value){
 	    res.json({
-                success: true,
-                workspace: {
+      	        success: true,
+      	        workspace: {
                     ...(clonedWorkspace as any),
-                    id: newWorkspaceId, //using custom id
+     		    id: newWorkspaceId,
                     editable: true,
                     name: newWorkspaceName
-                }});
-            return;
+      	        }
+	    });
+	    return
+	} else{
+ 	    console.error("Database update for clone failed; rolling back file system changes.");
+	    return next({ statusCode: 500, message: "Problem updating cloned workspace in database" });
 	}
-	*/
 
     } catch (err: any) {
         console.error("Error cloning workspace:", err);
