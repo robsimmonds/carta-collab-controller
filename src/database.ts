@@ -629,9 +629,26 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
     if (!workspacesCollection) {
         return next({ statusCode: 501, message: "Database not configured" });
     }
-
+    
     const sourceWorkspaceName = req.body?.workspaceName;
-   
+    const workspace = req.body?.workspace;
+    
+    console.log("FIne with extracting names")
+
+    // Check for malformed update
+    if (!sourceWorkspaceName || !workspace || workspace.workspaceVersion !== WORKSPACE_SCHEMA_VERSION) {
+        console.log("malformed")
+	return next({statusCode: 400, message: "Malformed workspace update"});
+    }
+
+    const validUpdate = validateWorkspace(workspace);
+    if (!validUpdate) {
+        console.log(validateWorkspace.errors);
+        return next({statusCode: 400, message: "Malformed workspace update"});
+    }
+
+    console.log("FIne with workspacechecks")
+
     try {
         // 1. Look up the source workspace record
         const sourceRecord = await workspacesCollection.findOne({ username: req.username, name: sourceWorkspaceName });
@@ -644,7 +661,7 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
 	const sourceWorkspaceId = sourceRecord._id.toString();
 
 	//surely we can get the workspace itself from the db?
-	const clonedWorkspace = { ...sourceRecord.workspace };
+	//const clonedWorkspace = { ...sourceRecord.workspace };
         const newWorkspaceId = new ObjectId().toString();
 	const newWorkspaceName = "clone"+sourceWorkspaceName;
 
@@ -667,13 +684,13 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
 	//Too messy fix it
 	
 	// Insert a new document into the workspaces collection with the new name and cloned workspace data.	
-	const insertResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: newWorkspaceName}, {$set: {clonedWorkspace}, $setOnInsert: { _id: newWorkspaceId}}, {upsert: true, returnDocument: "after"});
+	const insertResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: newWorkspaceName}, {$set: {workspace}, $setOnInsert: { _id: newWorkspaceId}}, {upsert: true, returnDocument: "after"});
 	
 	if (insertResult.ok && insertResult.value){
 	    res.json({
       	        success: true,
       	        workspace: {
-                    ...(clonedWorkspace as any),
+                    ...(workspace as any),
      		    id: newWorkspaceId,
                     editable: true,
                     name: newWorkspaceName
@@ -691,6 +708,64 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
     }
 }
 
+async function handleBranchWorkspace(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+
+    if (!req.username) {
+        return next({ statusCode: 403, message: "Invalid username" });
+    }
+    if (!workspacesCollection) {
+        return next({ statusCode: 501, message: "Database not configured" });
+    }
+ 
+
+    console.log("Incoming body:", req.body);
+
+    console.log("check 1 complete");    
+    
+    const workspaceName = req.body?.data?.workspaceName;
+    console.log("workspace name ", workspaceName);
+    if (!workspaceName) {
+        console.log("Workspace name error as we suspected")
+	return next({ statusCode: 400, message: "Workspace name and branch name are required" });
+    }
+    console.log("check 2 complete");
+    
+    try {
+        // 1. Look up the source workspace record
+        const sourceRecord = await workspacesCollection.findOne({ username: req.username, name: workspaceName });
+        if (!sourceRecord) {
+            return next({ statusCode: 404, message: "Source workspace not found" });
+        }
+        console.log("source workspace found");
+	
+	//get Id of source workspace to get
+        const workspaceId = sourceRecord._id.toString();
+
+
+	// Compute the workspace folder.
+        const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+        if (!fs.existsSync(workspaceFolder)) {
+            return next({ statusCode: 404, message: "Workspace folder not found" });
+        }
+
+	console.log("Workspace Folder found");
+	const branchName = "branch";
+
+	// Create the new branch using Git:
+        // The command checks out and creates a new branch in one step.
+        execSync(`git checkout -b "${branchName}"`, { cwd: workspaceFolder });
+        console.log(`Branch "${branchName}" created in workspace "${workspaceName}" for user "${req.username}"`);
+
+    	
+        res.json({
+            success: true,
+            message: `Branch "${branchName}" created for workspace "${workspaceName}"`
+        });
+    } catch (err: any) {
+        console.error("Error creating branch:", err);
+        return next({ statusCode: 500, message: err.message || "Failed to create branch" });
+    }
+}
 
 async function handleShareWorkspace(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
@@ -743,4 +818,5 @@ databaseRouter.put("/setWorkspace", authGuard, noCache, handleSetWorkspace);
 //new
 databaseRouter.put("/createWorkspace", authGuard, noCache, handleCreateWorkspace);
 databaseRouter.put("/cloneWorkspace", authGuard, noCache, handleCloneWorkspace);
+databaseRouter.put("/branchWorkspace", authGuard, noCache, handleBranchWorkspace);
 databaseRouter.delete("/workspace", authGuard, noCache, handleClearWorkspace);
