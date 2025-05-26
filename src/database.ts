@@ -631,23 +631,14 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
     }
     
     const sourceWorkspaceName = req.body?.workspaceName;
-    const workspace = req.body?.workspace;
     
     console.log("FIne with extracting names")
 
     // Check for malformed update
-    if (!sourceWorkspaceName || !workspace || workspace.workspaceVersion !== WORKSPACE_SCHEMA_VERSION) {
-        console.log("malformed")
-	return next({statusCode: 400, message: "Malformed workspace update"});
+    if (!sourceWorkspaceName) {
+        console.log("No name")
+	return next({statusCode: 400, message: "Workspace name required"});
     }
-
-    const validUpdate = validateWorkspace(workspace);
-    if (!validUpdate) {
-        console.log(validateWorkspace.errors);
-        return next({statusCode: 400, message: "Malformed workspace update"});
-    }
-
-    console.log("FIne with workspacechecks")
 
     try {
         // 1. Look up the source workspace record
@@ -661,9 +652,10 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
 	const sourceWorkspaceId = sourceRecord._id.toString();
 
 	//surely we can get the workspace itself from the db?
-	//const clonedWorkspace = { ...sourceRecord.workspace };
+	const clonedWorkspace = { ...sourceRecord.workspace };
         const newWorkspaceId = new ObjectId().toString();
-	const newWorkspaceName = "clone"+sourceWorkspaceName;
+        const dateStr = new Date().toISOString().replace(/[-:.TZ]/g, "");
+        const newWorkspaceName = `clone_${sourceWorkspaceName}_${dateStr}`;
 
         // 2. Compute folder paths.
         const sourceFolder = getWorkspaceFolder(req.username, sourceWorkspaceId);
@@ -684,13 +676,13 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
 	//Too messy fix it
 	
 	// Insert a new document into the workspaces collection with the new name and cloned workspace data.	
-	const insertResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: newWorkspaceName}, {$set: {workspace}, $setOnInsert: { _id: newWorkspaceId}}, {upsert: true, returnDocument: "after"});
+	const insertResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: newWorkspaceName}, {$set: {workspace: clonedWorkspace}, $setOnInsert: { _id: newWorkspaceId}}, {upsert: true, returnDocument: "after"});
 	
 	if (insertResult.ok && insertResult.value){
 	    res.json({
       	        success: true,
       	        workspace: {
-                    ...(workspace as any),
+                    ...(clonedWorkspace as any),
      		    id: newWorkspaceId,
                     editable: true,
                     name: newWorkspaceName
@@ -722,7 +714,7 @@ async function handleBranchWorkspace(req: AuthenticatedRequest, res: express.Res
 
     console.log("check 1 complete");    
     
-    const workspaceName = req.body?.data?.workspaceName;
+    const workspaceName = req.body?.workspaceName;
     console.log("workspace name ", workspaceName);
     if (!workspaceName) {
         console.log("Workspace name error as we suspected")
