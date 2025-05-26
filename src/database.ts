@@ -8,14 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { execSync } from "child_process";
-import { exec } from "child_process";
-import { promisify } from "util";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder } from "./workspaceUtils";
-
-
-// Promisify exec for asynchronous Git operations.
-const execAsync = promisify(exec);
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch } from "./workspaceUtils";
 
 
 const PREFERENCE_SCHEMA_VERSION = 2;
@@ -662,13 +655,13 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
         const destinationFolder = getWorkspaceFolder(req.username, newWorkspaceId);
 
 	// Ensure the destination folder does not exist.
-        if (fs.existsSync(destinationFolder)) {
+        if (await folderExists(destinationFolder)) {
             return next({ statusCode: 409, message: "Destination workspace already exists" });
         }
 
         // 3. Clone the repository.
         // Using git clone command: "git clone <sourceFolder> <destinationFolder>"
-        execSync(`git clone "${sourceFolder}" "${destinationFolder}"`, { stdio: "inherit" });
+        await cloneGitRepo(sourceFolder, destinationFolder);
         console.log("Workspace cloned from", sourceFolder, "to", destinationFolder);
 	console.log("All good with clones");
        
@@ -736,7 +729,7 @@ async function handleBranchWorkspace(req: AuthenticatedRequest, res: express.Res
 
 	// Compute the workspace folder.
         const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
-        if (!fs.existsSync(workspaceFolder)) {
+        if (!(await folderExists(workspaceFolder))) {
             return next({ statusCode: 404, message: "Workspace folder not found" });
         }
 
@@ -745,7 +738,7 @@ async function handleBranchWorkspace(req: AuthenticatedRequest, res: express.Res
 
 	// Create the new branch using Git:
         // The command checks out and creates a new branch in one step.
-        execSync(`git checkout -b "${branchName}"`, { cwd: workspaceFolder });
+        await createGitBranch(workspaceFolder, branchName);
         console.log(`Branch "${branchName}" created in workspace "${workspaceName}" for user "${req.username}"`);
 
     	
