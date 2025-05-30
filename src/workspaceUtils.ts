@@ -126,13 +126,20 @@ export async function checkoutGitBranch(workspaceFolder: string, branchName: str
 /**
  * Lists all git branches in the given folder.
  */
-export async function listGitBranches(workspaceFolder: string): Promise<string[]> {
+export async function listGitBranches(workspaceFolder: string): Promise<{branches: string[], current: string}> {
   const { stdout } = await execAsync(`git branch --list`, { cwd: workspaceFolder });
-  // Parse output: current branch is prefixed with '*'
-  return stdout
+  let current = "";
+  const branches = stdout
     .split("\n")
-    .map(line => line.replace(/^\*?\s*/, ""))
+    .map(line => {
+      if (line.startsWith("*")) {
+        current = line.replace(/^\*\s*/, "");
+        return current;
+      }
+      return line.replace(/^\s*/, "");
+    })
     .filter(Boolean);
+  return { branches, current };
 }
 
 

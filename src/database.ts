@@ -837,9 +837,9 @@ async function handleListWorkspaceBranches(req: AuthenticatedRequest, res: expre
         const workspaceId = workspace._id.toString();
         const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
 
-        const branches = await listGitBranches(workspaceFolder);
+        const { branches, current } = await listGitBranches(workspaceFolder);
 
-        res.json({ success: true, branches });
+        res.json({ success: true, branches, current });
     } catch (err: any) {
         console.error("Error listing branches:", err);
         return next({ statusCode: 500, message: err.message || "Failed to list branches" });
