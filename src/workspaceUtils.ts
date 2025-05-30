@@ -116,6 +116,25 @@ export async function createGitBranch(folderPath: string, branchName: string): P
   console.log(`Created branch ${branchName} in ${folderPath}`);
 }
 
+/**
+ * Checks out a git branch in the given folder.
+ */
+export async function checkoutGitBranch(workspaceFolder: string, branchName: string) {
+  await execAsync(`git checkout ${branchName}`, { cwd: workspaceFolder });
+}
+
+/**
+ * Lists all git branches in the given folder.
+ */
+export async function listGitBranches(workspaceFolder: string): Promise<string[]> {
+  const { stdout } = await execAsync(`git branch --list`, { cwd: workspaceFolder });
+  // Parse output: current branch is prefixed with '*'
+  return stdout
+    .split("\n")
+    .map(line => line.replace(/^\*?\s*/, ""))
+    .filter(Boolean);
+}
+
 
 
 

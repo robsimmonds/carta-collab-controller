@@ -8,7 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch } from "./workspaceUtils";
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches } from "./workspaceUtils";
 
 
 const PREFERENCE_SCHEMA_VERSION = 2;
@@ -785,6 +785,67 @@ async function handleShareWorkspace(req: AuthenticatedRequest, res: Response, ne
     }
 }
 
+async function handleSwitchWorkspaceBranch(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+    if (!req.username) {
+        return next({ statusCode: 403, message: "Invalid username" });
+    }
+    if (!workspacesCollection) {
+        return next({ statusCode: 501, message: "Database not configured" });
+    }
+
+    const workspaceName = req.body?.workspaceName;
+    const branchName = req.body?.branchName;
+    if (!workspaceName || !branchName) {
+        return next({ statusCode: 400, message: "Workspace name and branch name are required" });
+    }
+
+    try {
+        const workspace = await workspacesCollection.findOne({ username: req.username, name: workspaceName });
+        if (!workspace) {
+            return next({ statusCode: 404, message: "Workspace not found" });
+        }
+        const workspaceId = workspace._id.toString();
+        const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+
+        await checkoutGitBranch(workspaceFolder, branchName);
+
+        res.json({ success: true, message: `Switched to branch "${branchName}" in workspace "${workspaceName}"` });
+    } catch (err: any) {
+        console.error("Error switching branch:", err);
+        return next({ statusCode: 500, message: err.message || "Failed to switch branch" });
+    }
+}
+
+async function handleListWorkspaceBranches(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+    if (!req.username) {
+        return next({ statusCode: 403, message: "Invalid username" });
+    }
+    if (!workspacesCollection) {
+        return next({ statusCode: 501, message: "Database not configured" });
+    }
+
+    const workspaceName = req.body?.workspaceName;
+    if (!workspaceName) {
+        return next({ statusCode: 400, message: "Workspace name is required" });
+    }
+
+    try {
+        const workspace = await workspacesCollection.findOne({ username: req.username, name: workspaceName });
+        if (!workspace) {
+            return next({ statusCode: 404, message: "Workspace not found" });
+        }
+        const workspaceId = workspace._id.toString();
+        const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+
+        const branches = await listGitBranches(workspaceFolder);
+
+        res.json({ success: true, branches });
+    } catch (err: any) {
+        console.error("Error listing branches:", err);
+        return next({ statusCode: 500, message: err.message || "Failed to list branches" });
+    }
+}
+
 export const databaseRouter = express.Router();
 
 databaseRouter.get("/preferences", authGuard, noCache, handleGetPreferences);
@@ -810,3 +871,5 @@ databaseRouter.put("/createWorkspace", authGuard, noCache, handleCreateWorkspace
 databaseRouter.put("/cloneWorkspace", authGuard, noCache, handleCloneWorkspace);
 databaseRouter.put("/branchWorkspace", authGuard, noCache, handleBranchWorkspace);
 databaseRouter.delete("/workspace", authGuard, noCache, handleClearWorkspace);
+databaseRouter.put("/switchWorkspaceBranch", authGuard, noCache, handleSwitchWorkspaceBranch);
+databaseRouter.post("/listWorkspaceBranches", authGuard, noCache, handleListWorkspaceBranches);
