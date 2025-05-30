@@ -557,6 +557,9 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
 
     const workspaceName = req.body?.workspaceName;
     const workspace = req.body?.workspace;
+    const commitMessage = req.body?.commitMessage;
+
+    console.log("COMMIT:", commitMessage);
 
     // Check for malformed update
     if (!workspaceName || !workspace || workspace.workspaceVersion !== WORKSPACE_SCHEMA_VERSION) {
@@ -593,8 +596,10 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
 	console.log("Update workspace JSON written to:", workspaceJsonPath);
 	
 	// Stage and commit the changes.
-	const commitMessage = `Updated workspace "${workspaceName}" by ${req.username} at ${new Date().toISOString()}`;
-       	await stageAndCommit(workspaceFolder, commitMessage);
+	const finalCommitMessage = commitMessage && commitMessage.trim().length > 0
+            ? commitMessage
+            : `Updated workspace "${workspaceName}" by ${req.username} at ${new Date().toISOString()}`;
+       	await stageAndCommit(workspaceFolder, finalCommitMessage);
 
 	if (updateResult.ok && updateResult.value) {
             res.json({
