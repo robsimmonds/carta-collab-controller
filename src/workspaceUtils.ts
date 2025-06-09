@@ -142,6 +142,16 @@ export async function listGitBranches(workspaceFolder: string): Promise<{branche
   return { branches, current };
 }
 
+/**
+ * Reads and parses the workspace.json file from the given workspace folder.
+ * Throws if the file cannot be read or parsed.
+ */
+export async function readWorkspaceJson(folderPath: string): Promise<any> {
+  const filePath = path.join(folderPath, "workspace.json");
+  const jsonString = await fs.promises.readFile(filePath, "utf-8");
+  return JSON.parse(jsonString);
+}
+
 
 
 

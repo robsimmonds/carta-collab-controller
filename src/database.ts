@@ -8,7 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches } from "./workspaceUtils";
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson } from "./workspaceUtils";
 
 
 const PREFERENCE_SCHEMA_VERSION = 2;
@@ -422,11 +422,26 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
 
     try {
         const queryResult = await workspacesCollection.findOne({username: req.username, name: req.params.name}, {projection: {username: 0}});
-        if (!queryResult?.workspace) {
+        if (!queryResult) {
             return next({statusCode: 404, message: "Workspace not found"});
-        } else {
-            res.json({success: true, workspace: {id: queryResult._id, name: queryResult.name, editable: true, ...queryResult.workspace}});
         }
+        const workspaceId = queryResult._id.toString();
+        const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+        let workspaceData;
+        try {
+            workspaceData = await readWorkspaceJson(workspaceFolder);
+        } catch (err) {
+            return next({statusCode: 500, message: "Could not read workspace JSON from branch"});
+        }
+        res.json({
+            success: true,
+            workspace: {
+                id: workspaceId,
+                name: queryResult.name,
+                editable: true,
+                ...workspaceData
+            }
+        });
     } catch (err) {
         verboseError(err);
         return next({statusCode: 500, message: "Problem retrieving workspace"});
@@ -450,13 +465,28 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
     try {
         const objectId = Buffer.from(req.params.key, "base64url").toString("hex");
         const queryResult = await workspacesCollection.findOne({_id: new ObjectId(objectId)});
-        if (!queryResult?.workspace) {
+        if (!queryResult) {
             return next({statusCode: 404, message: "Workspace not found"});
         } else if (queryResult.username !== req.username && !queryResult.shared) {
             return next({statusCode: 403, message: "Workspace not accessible"});
-        } else {
-            res.json({success: true, workspace: {id: queryResult._id, name: queryResult.name, editable: queryResult.username === req.username, ...queryResult.workspace}});
         }
+        const workspaceId = queryResult._id.toString();
+        const workspaceFolder = getWorkspaceFolder(queryResult.username, workspaceId);
+        let workspaceData;
+        try {
+            workspaceData = await readWorkspaceJson(workspaceFolder);
+        } catch (err) {
+            return next({statusCode: 500, message: "Could not read workspace JSON from branch"});
+        }
+        res.json({
+            success: true,
+            workspace: {
+                id: workspaceId,
+                name: queryResult.name,
+                editable: queryResult.username === req.username,
+                ...workspaceData
+            }
+        });
     } catch (err) {
         verboseError(err);
         return next({statusCode: 500, message: "Problem retrieving workspace"});
