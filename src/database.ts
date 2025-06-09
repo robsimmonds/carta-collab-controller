@@ -739,7 +739,10 @@ async function handleBranchWorkspace(req: AuthenticatedRequest, res: express.Res
         }
 
 	console.log("Workspace Folder found");
-	const branchName = "branch";
+	const branchName = req.body?.branchName;
+	if (!branchName) {
+	    return next({ statusCode: 400, message: "Workspace name and branch name are required" });
+	}
 
 	// Create the new branch using Git:
         // The command checks out and creates a new branch in one step.
