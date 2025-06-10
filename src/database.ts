@@ -8,7 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch } from "./workspaceUtils";
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson } from "./workspaceUtils";
 
 
 const PREFERENCE_SCHEMA_VERSION = 2;
@@ -422,11 +422,26 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
 
     try {
         const queryResult = await workspacesCollection.findOne({username: req.username, name: req.params.name}, {projection: {username: 0}});
-        if (!queryResult?.workspace) {
+        if (!queryResult) {
             return next({statusCode: 404, message: "Workspace not found"});
-        } else {
-            res.json({success: true, workspace: {id: queryResult._id, name: queryResult.name, editable: true, ...queryResult.workspace}});
         }
+        const workspaceId = queryResult._id.toString();
+        const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+        let workspaceData;
+        try {
+            workspaceData = await readWorkspaceJson(workspaceFolder);
+        } catch (err) {
+            return next({statusCode: 500, message: "Could not read workspace JSON from branch"});
+        }
+        res.json({
+            success: true,
+            workspace: {
+                id: workspaceId,
+                name: queryResult.name,
+                editable: true,
+                ...workspaceData
+            }
+        });
     } catch (err) {
         verboseError(err);
         return next({statusCode: 500, message: "Problem retrieving workspace"});
@@ -450,13 +465,28 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
     try {
         const objectId = Buffer.from(req.params.key, "base64url").toString("hex");
         const queryResult = await workspacesCollection.findOne({_id: new ObjectId(objectId)});
-        if (!queryResult?.workspace) {
+        if (!queryResult) {
             return next({statusCode: 404, message: "Workspace not found"});
         } else if (queryResult.username !== req.username && !queryResult.shared) {
             return next({statusCode: 403, message: "Workspace not accessible"});
-        } else {
-            res.json({success: true, workspace: {id: queryResult._id, name: queryResult.name, editable: queryResult.username === req.username, ...queryResult.workspace}});
         }
+        const workspaceId = queryResult._id.toString();
+        const workspaceFolder = getWorkspaceFolder(queryResult.username, workspaceId);
+        let workspaceData;
+        try {
+            workspaceData = await readWorkspaceJson(workspaceFolder);
+        } catch (err) {
+            return next({statusCode: 500, message: "Could not read workspace JSON from branch"});
+        }
+        res.json({
+            success: true,
+            workspace: {
+                id: workspaceId,
+                name: queryResult.name,
+                editable: queryResult.username === req.username,
+                ...workspaceData
+            }
+        });
     } catch (err) {
         verboseError(err);
         return next({statusCode: 500, message: "Problem retrieving workspace"});
@@ -557,6 +587,9 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
 
     const workspaceName = req.body?.workspaceName;
     const workspace = req.body?.workspace;
+    const commitMessage = req.body?.commitMessage;
+
+    console.log("COMMIT:", commitMessage);
 
     // Check for malformed update
     if (!workspaceName || !workspace || workspace.workspaceVersion !== WORKSPACE_SCHEMA_VERSION) {
@@ -593,8 +626,10 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
 	console.log("Update workspace JSON written to:", workspaceJsonPath);
 	
 	// Stage and commit the changes.
-	const commitMessage = `Updated workspace "${workspaceName}" by ${req.username} at ${new Date().toISOString()}`;
-       	await stageAndCommit(workspaceFolder, commitMessage);
+	const finalCommitMessage = commitMessage && commitMessage.trim().length > 0
+            ? commitMessage
+            : `Updated workspace "${workspaceName}" by ${req.username} at ${new Date().toISOString()}`;
+       	await stageAndCommit(workspaceFolder, finalCommitMessage);
 
 	if (updateResult.ok && updateResult.value) {
             res.json({
@@ -734,7 +769,10 @@ async function handleBranchWorkspace(req: AuthenticatedRequest, res: express.Res
         }
 
 	console.log("Workspace Folder found");
-	const branchName = "branch";
+	const branchName = req.body?.branchName;
+	if (!branchName) {
+	    return next({ statusCode: 400, message: "Workspace name and branch name are required" });
+	}
 
 	// Create the new branch using Git:
         // The command checks out and creates a new branch in one step.
@@ -780,6 +818,67 @@ async function handleShareWorkspace(req: AuthenticatedRequest, res: Response, ne
     }
 }
 
+async function handleSwitchWorkspaceBranch(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+    if (!req.username) {
+        return next({ statusCode: 403, message: "Invalid username" });
+    }
+    if (!workspacesCollection) {
+        return next({ statusCode: 501, message: "Database not configured" });
+    }
+
+    const workspaceName = req.body?.workspaceName;
+    const branchName = req.body?.branchName;
+    if (!workspaceName || !branchName) {
+        return next({ statusCode: 400, message: "Workspace name and branch name are required" });
+    }
+
+    try {
+        const workspace = await workspacesCollection.findOne({ username: req.username, name: workspaceName });
+        if (!workspace) {
+            return next({ statusCode: 404, message: "Workspace not found" });
+        }
+        const workspaceId = workspace._id.toString();
+        const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+
+        await checkoutGitBranch(workspaceFolder, branchName);
+
+        res.json({ success: true, message: `Switched to branch "${branchName}" in workspace "${workspaceName}"` });
+    } catch (err: any) {
+        console.error("Error switching branch:", err);
+        return next({ statusCode: 500, message: err.message || "Failed to switch branch" });
+    }
+}
+
+async function handleListWorkspaceBranches(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+    if (!req.username) {
+        return next({ statusCode: 403, message: "Invalid username" });
+    }
+    if (!workspacesCollection) {
+        return next({ statusCode: 501, message: "Database not configured" });
+    }
+
+    const workspaceName = req.body?.workspaceName;
+    if (!workspaceName) {
+        return next({ statusCode: 400, message: "Workspace name is required" });
+    }
+
+    try {
+        const workspace = await workspacesCollection.findOne({ username: req.username, name: workspaceName });
+        if (!workspace) {
+            return next({ statusCode: 404, message: "Workspace not found" });
+        }
+        const workspaceId = workspace._id.toString();
+        const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+
+        const { branches, current } = await listGitBranches(workspaceFolder);
+
+        res.json({ success: true, branches, current });
+    } catch (err: any) {
+        console.error("Error listing branches:", err);
+        return next({ statusCode: 500, message: err.message || "Failed to list branches" });
+    }
+}
+
 export const databaseRouter = express.Router();
 
 databaseRouter.get("/preferences", authGuard, noCache, handleGetPreferences);
@@ -805,3 +904,5 @@ databaseRouter.put("/createWorkspace", authGuard, noCache, handleCreateWorkspace
 databaseRouter.put("/cloneWorkspace", authGuard, noCache, handleCloneWorkspace);
 databaseRouter.put("/branchWorkspace", authGuard, noCache, handleBranchWorkspace);
 databaseRouter.delete("/workspace", authGuard, noCache, handleClearWorkspace);
+databaseRouter.put("/switchWorkspaceBranch", authGuard, noCache, handleSwitchWorkspaceBranch);
+databaseRouter.post("/listWorkspaceBranches", authGuard, noCache, handleListWorkspaceBranches);

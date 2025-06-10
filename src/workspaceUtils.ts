@@ -116,6 +116,42 @@ export async function createGitBranch(folderPath: string, branchName: string): P
   console.log(`Created branch ${branchName} in ${folderPath}`);
 }
 
+/**
+ * Checks out a git branch in the given folder.
+ */
+export async function checkoutGitBranch(workspaceFolder: string, branchName: string) {
+  await execAsync(`git checkout ${branchName}`, { cwd: workspaceFolder });
+}
+
+/**
+ * Lists all git branches in the given folder.
+ */
+export async function listGitBranches(workspaceFolder: string): Promise<{branches: string[], current: string}> {
+  const { stdout } = await execAsync(`git branch --list`, { cwd: workspaceFolder });
+  let current = "";
+  const branches = stdout
+    .split("\n")
+    .map(line => {
+      if (line.startsWith("*")) {
+        current = line.replace(/^\*\s*/, "");
+        return current;
+      }
+      return line.replace(/^\s*/, "");
+    })
+    .filter(Boolean);
+  return { branches, current };
+}
+
+/**
+ * Reads and parses the workspace.json file from the given workspace folder.
+ * Throws if the file cannot be read or parsed.
+ */
+export async function readWorkspaceJson(folderPath: string): Promise<any> {
+  const filePath = path.join(folderPath, "workspace.json");
+  const jsonString = await fs.promises.readFile(filePath, "utf-8");
+  return JSON.parse(jsonString);
+}
+
 
 
 
