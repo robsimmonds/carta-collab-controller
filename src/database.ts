@@ -8,14 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { execSync } from "child_process";
-import { exec } from "child_process";
-import { promisify } from "util";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder } from "./workspaceUtils";
-
-
-// Promisify exec for asynchronous Git operations.
-const execAsync = promisify(exec);
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch } from "./workspaceUtils";
 
 
 const PREFERENCE_SCHEMA_VERSION = 2;
@@ -629,9 +622,17 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
     if (!workspacesCollection) {
         return next({ statusCode: 501, message: "Database not configured" });
     }
-
+    
     const sourceWorkspaceName = req.body?.workspaceName;
-   
+    
+    console.log("FIne with extracting names")
+
+    // Check for malformed update
+    if (!sourceWorkspaceName) {
+        console.log("No name")
+	return next({statusCode: 400, message: "Workspace name required"});
+    }
+
     try {
         // 1. Look up the source workspace record
         const sourceRecord = await workspacesCollection.findOne({ username: req.username, name: sourceWorkspaceName });
@@ -646,20 +647,21 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
 	//surely we can get the workspace itself from the db?
 	const clonedWorkspace = { ...sourceRecord.workspace };
         const newWorkspaceId = new ObjectId().toString();
-	const newWorkspaceName = "clone"+sourceWorkspaceName;
+        const dateStr = new Date().toISOString().replace(/[-:.TZ]/g, "");
+        const newWorkspaceName = `clone_${sourceWorkspaceName}_${dateStr}`;
 
         // 2. Compute folder paths.
         const sourceFolder = getWorkspaceFolder(req.username, sourceWorkspaceId);
         const destinationFolder = getWorkspaceFolder(req.username, newWorkspaceId);
 
 	// Ensure the destination folder does not exist.
-        if (fs.existsSync(destinationFolder)) {
+        if (await folderExists(destinationFolder)) {
             return next({ statusCode: 409, message: "Destination workspace already exists" });
         }
 
         // 3. Clone the repository.
         // Using git clone command: "git clone <sourceFolder> <destinationFolder>"
-        execSync(`git clone "${sourceFolder}" "${destinationFolder}"`, { stdio: "inherit" });
+        await cloneGitRepo(sourceFolder, destinationFolder);
         console.log("Workspace cloned from", sourceFolder, "to", destinationFolder);
 	console.log("All good with clones");
        
@@ -667,7 +669,7 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
 	//Too messy fix it
 	
 	// Insert a new document into the workspaces collection with the new name and cloned workspace data.	
-	const insertResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: newWorkspaceName}, {$set: {clonedWorkspace}, $setOnInsert: { _id: newWorkspaceId}}, {upsert: true, returnDocument: "after"});
+	const insertResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: newWorkspaceName}, {$set: {workspace: clonedWorkspace}, $setOnInsert: { _id: newWorkspaceId}}, {upsert: true, returnDocument: "after"});
 	
 	if (insertResult.ok && insertResult.value){
 	    res.json({
@@ -691,6 +693,64 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
     }
 }
 
+async function handleBranchWorkspace(req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) {
+
+    if (!req.username) {
+        return next({ statusCode: 403, message: "Invalid username" });
+    }
+    if (!workspacesCollection) {
+        return next({ statusCode: 501, message: "Database not configured" });
+    }
+ 
+
+    console.log("Incoming body:", req.body);
+
+    console.log("check 1 complete");    
+    
+    const workspaceName = req.body?.workspaceName;
+    console.log("workspace name ", workspaceName);
+    if (!workspaceName) {
+        console.log("Workspace name error as we suspected")
+	return next({ statusCode: 400, message: "Workspace name and branch name are required" });
+    }
+    console.log("check 2 complete");
+    
+    try {
+        // 1. Look up the source workspace record
+        const sourceRecord = await workspacesCollection.findOne({ username: req.username, name: workspaceName });
+        if (!sourceRecord) {
+            return next({ statusCode: 404, message: "Source workspace not found" });
+        }
+        console.log("source workspace found");
+	
+	//get Id of source workspace to get
+        const workspaceId = sourceRecord._id.toString();
+
+
+	// Compute the workspace folder.
+        const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+        if (!(await folderExists(workspaceFolder))) {
+            return next({ statusCode: 404, message: "Workspace folder not found" });
+        }
+
+	console.log("Workspace Folder found");
+	const branchName = "branch";
+
+	// Create the new branch using Git:
+        // The command checks out and creates a new branch in one step.
+        await createGitBranch(workspaceFolder, branchName);
+        console.log(`Branch "${branchName}" created in workspace "${workspaceName}" for user "${req.username}"`);
+
+    	
+        res.json({
+            success: true,
+            message: `Branch "${branchName}" created for workspace "${workspaceName}"`
+        });
+    } catch (err: any) {
+        console.error("Error creating branch:", err);
+        return next({ statusCode: 500, message: err.message || "Failed to create branch" });
+    }
+}
 
 async function handleShareWorkspace(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
@@ -743,4 +803,5 @@ databaseRouter.put("/setWorkspace", authGuard, noCache, handleSetWorkspace);
 //new
 databaseRouter.put("/createWorkspace", authGuard, noCache, handleCreateWorkspace);
 databaseRouter.put("/cloneWorkspace", authGuard, noCache, handleCloneWorkspace);
+databaseRouter.put("/branchWorkspace", authGuard, noCache, handleBranchWorkspace);
 databaseRouter.delete("/workspace", authGuard, noCache, handleClearWorkspace);

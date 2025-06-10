@@ -88,6 +88,34 @@ export async function deleteWorkspaceFolder(folderPath: string): Promise<void> {
   }
 }
 
+/**
+ * Checks if a folder exists. Returns true if it exists, false otherwise.
+ */
+export async function folderExists(folderPath: string): Promise<boolean> {
+  try {
+    await fs.promises.access(folderPath, fs.constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Clones a git repository from source to destination.
+ */
+export async function cloneGitRepo(sourceFolder: string, destinationFolder: string): Promise<void> {
+  await execAsync(`git clone "${sourceFolder}" "${destinationFolder}"`);
+  console.log(`Cloned git repo from ${sourceFolder} to ${destinationFolder}`);
+}
+
+/**
+ * Creates a new git branch in the given folder.
+ */
+export async function createGitBranch(folderPath: string, branchName: string): Promise<void> {
+  await execAsync(`git checkout -b "${branchName}"`, { cwd: folderPath });
+  console.log(`Created branch ${branchName} in ${folderPath}`);
+}
+
 
 
 
