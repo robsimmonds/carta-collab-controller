@@ -8,7 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson } from "./workspaceUtils";
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph } from "./workspaceUtils";
 
 
 const PREFERENCE_SCHEMA_VERSION = 2;
@@ -879,6 +879,27 @@ async function handleListWorkspaceBranches(req: AuthenticatedRequest, res: expre
     }
 }
 
+async function handleGetWorkspaceTopology(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    if (!req.username) return next({ statusCode: 403, message: "Invalid username" });
+    if (!workspacesCollection) return next({ statusCode: 501, message: "Database not configured" });
+
+    const workspaceName = req.body?.workspaceName;
+    if (!workspaceName) return next({ statusCode: 400, message: "Workspace name is required" });
+
+    try {
+        const workspace = await workspacesCollection.findOne({ username: req.username, name: workspaceName });
+        if (!workspace) return next({ statusCode: 404, message: "Workspace not found" });
+        const workspaceId = workspace._id.toString();
+        const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+
+        const graph = await getGitCommitGraph(workspaceFolder);
+        res.json({ success: true, graph });
+    } catch (err) {
+        console.error("Error getting branch topology:", err);
+        return next({ statusCode: 500, message: err.message || "Failed to get branch topology" });
+    }
+}
+
 export const databaseRouter = express.Router();
 
 databaseRouter.get("/preferences", authGuard, noCache, handleGetPreferences);
@@ -906,3 +927,4 @@ databaseRouter.put("/branchWorkspace", authGuard, noCache, handleBranchWorkspace
 databaseRouter.delete("/workspace", authGuard, noCache, handleClearWorkspace);
 databaseRouter.put("/switchWorkspaceBranch", authGuard, noCache, handleSwitchWorkspaceBranch);
 databaseRouter.post("/listWorkspaceBranches", authGuard, noCache, handleListWorkspaceBranches);
+databaseRouter.post("/workspaceTopology", authGuard, noCache, handleGetWorkspaceTopology);
