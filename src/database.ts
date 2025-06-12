@@ -3,7 +3,7 @@ import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import {Collection, Db, MongoClient, ObjectId} from "mongodb";
 import {authGuard} from "./auth";
-import {noCache, verboseError} from "./util";
+import {noCache, verboseWarn, verboseError} from "./util";
 import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
@@ -15,8 +15,7 @@ const PREFERENCE_SCHEMA_VERSION = 2;
 const LAYOUT_SCHEMA_VERSION = 2;
 const SNIPPET_SCHEMA_VERSION = 1;
 const WORKSPACE_SCHEMA_VERSION = 0;
-//new
-//const WORKSPACE_ROOT = "../src/data/workspaces"; //file system path
+
 const WORKSPACE_ROOT = path.resolve(__dirname, "../data/workspaces"); //absolute path
 
 
@@ -24,6 +23,7 @@ const preferenceSchema = require("../config/preference_schema_2.json");
 const layoutSchema = require("../config/layout_schema_2.json");
 const snippetSchema = require("../config/snippet_schema.json");
 const workspaceSchema = require("../config/workspace_schema_1.json");
+
 const ajv = new Ajv({useDefaults: true, strictTypes: false});
 addFormats(ajv);
 const validatePreferences = ajv.compile(preferenceSchema);
@@ -102,6 +102,10 @@ async function handleGetPreferences(req: AuthenticatedRequest, res: Response, ne
     try {
         const doc = await preferenceCollection.findOne({username: req.username}, {projection: {_id: 0, username: 0}});
         if (doc) {
+            const isValid = validatePreferences(doc);
+            if (!isValid) {
+                verboseWarn(`Returning invalid preferences:\n${validatePreferences.errors}`);
+            }
             res.json({success: true, preferences: doc});
         } else {
             return next({statusCode: 500, message: "Problem retrieving preferences"});
@@ -131,8 +135,8 @@ async function handleSetPreferences(req: AuthenticatedRequest, res: Response, ne
 
     const validUpdate = validatePreferences(update);
     if (!validUpdate) {
-        console.log(validatePreferences.errors);
-        return next({statusCode: 400, message: "Malformed preference update"});
+        console.warn(`Rejecting invalid preference update:\n${validatePreferences.errors}`);
+        return next({statusCode: 400, message: "Invalid preference update"});
     }
 
     try {
@@ -195,6 +199,10 @@ async function handleGetLayouts(req: AuthenticatedRequest, res: Response, next: 
         const layouts = {} as any;
         for (const entry of layoutList) {
             if (entry.name && entry.layout) {
+                const isValid = validateLayout(entry.layout);
+                if (!isValid) {
+                    verboseWarn(`Returning invalid layout '${entry.name}':\n${validateLayout.errors}`);
+                }
                 layouts[entry.name] = entry.layout;
             }
         }
@@ -223,8 +231,8 @@ async function handleSetLayout(req: AuthenticatedRequest, res: Response, next: N
 
     const validUpdate = validateLayout(layout);
     if (!validUpdate) {
-        console.log(validateLayout.errors);
-        return next({statusCode: 400, message: "Malformed layout update"});
+        console.warn(`Rejecting invalid layout update:\n${validateLayout.errors}`);
+        return next({statusCode: 400, message: "Invalid layout update"});
     }
 
     try {
@@ -277,6 +285,10 @@ async function handleGetSnippets(req: AuthenticatedRequest, res: Response, next:
         const snippets = {} as any;
         for (const entry of snippetList) {
             if (entry.name && entry.snippet) {
+                const isValid = validateSnippet(entry.snippet);
+                if (!isValid) {
+                    verboseWarn(`Returning invalid snippet '${entry.name}':\n${validateSnippet.errors}`);
+                }
                 snippets[entry.name] = entry.snippet;
             }
         }
@@ -305,8 +317,8 @@ async function handleSetSnippet(req: AuthenticatedRequest, res: Response, next: 
 
     const validUpdate = validateSnippet(snippet);
     if (!validUpdate) {
-        console.log(validateSnippet.errors);
-        return next({statusCode: 400, message: "Malformed snippet update"});
+        console.warn(`Rejecting invalid snippet update:\n${validateSnippet.errors}`);
+        return next({statusCode: 400, message: "Invalid snippet update"});
     }
 
     try {
@@ -424,6 +436,7 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
         const queryResult = await workspacesCollection.findOne({users: req.username, name: req.params.name}, {projection: {username: 0}});
         if (!queryResult) {
             return next({statusCode: 404, message: "Workspace not found"});
+
         }
         const workspaceId = queryResult._id.toString();
         const workspaceFolder = getWorkspaceFolder(workspaceId);
@@ -471,6 +484,7 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
             return next({statusCode: 404, message: "Workspacesss not found"});
         } else if (!queryResult.users?.includes(req.username) && !queryResult.shared) {
             return next({statusCode: 403, message: "Workspace not accessible"});
+
         }
         const workspaceId = queryResult._id.toString();
         const workspaceFolder = getWorkspaceFolder( workspaceId);
@@ -601,8 +615,8 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
 
     const validUpdate = validateWorkspace(workspace);
     if (!validUpdate) {
-        console.log(validateWorkspace.errors);
-        return next({statusCode: 400, message: "Malformed workspace update"});
+        console.warn(`Rejecting invalid workspace update:\n${validateWorkspace.errors}`);
+        return next({statusCode: 400, message: "Invalid workspace update"});
     }
 
     try {
@@ -961,8 +975,9 @@ databaseRouter.post("/share/workspace/:id", authGuard, noCache, handleShareWorks
 databaseRouter.get("/list/workspaces", authGuard, noCache, handleGetWorkspaceList);
 databaseRouter.get("/workspace/key/:key", authGuard, noCache, handleGetWorkspaceByKey);
 databaseRouter.get("/workspace/:name", authGuard, noCache, handleGetWorkspaceByName);
+
 databaseRouter.put("/setWorkspace", authGuard, noCache, handleSetWorkspace);
-//new
+
 databaseRouter.put("/createWorkspace", authGuard, noCache, handleCreateWorkspace);
 databaseRouter.put("/cloneWorkspace", authGuard, noCache, handleCloneWorkspace);
 databaseRouter.put("/branchWorkspace", authGuard, noCache, handleBranchWorkspace);
@@ -971,3 +986,4 @@ databaseRouter.put("/switchWorkspaceBranch", authGuard, noCache, handleSwitchWor
 databaseRouter.post("/listWorkspaceBranches", authGuard, noCache, handleListWorkspaceBranches);
 databaseRouter.post("/workspaceTopology", authGuard, noCache, handleGetWorkspaceTopology);
 databaseRouter.delete("/deleteWorkspaceBranch", authGuard, noCache, handleDeleteWorkspaceBranch);
+

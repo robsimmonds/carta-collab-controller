@@ -35,9 +35,9 @@ const argv = yargs
 const usingCustomConfig = argv.config !== defaultConfigPath;
 const testUser = argv.test;
 const verboseOutput = argv.verbose;
-const configSchema = require("../config/config_schema.json");
-const ajv = new Ajv({useDefaults: false, allowUnionTypes: true});
-const ajvWithDefaults = new Ajv({useDefaults: true, allowUnionTypes: true});
+const configSchema = require("../schemas/controller_config_schema_2.json");
+const ajv = new Ajv({useDefaults: false});
+const ajvWithDefaults = new Ajv({useDefaults: true});
 addFormats(ajv);
 addFormats(ajvWithDefaults);
 const validateConfig = ajv.compile(configSchema);
