@@ -91,7 +91,7 @@ By default, the controller assumes the config file is located at ``/etc/carta/co
 
 Configuration may also be added in separate files in a ``config.d`` directory in the same parent directory as the specified config file. Each file in this directory must be a valid configuration file. Any files found will be processed in alphabetical order, after the main configuration file.
 
-The controller automatically executes the backend with the ``--no_http`` flag, to suppress the backend's built-in HTTP server. If the ``logFileTemplate`` configuration option is set, ``--no_log`` is also used to suppress user-level logs. ``--port`` is used to override the default port. ``--top_level_folder`` and a positional argument are used to set the top-level and starting data directories for the user, as specified in the ``rootFolderTemplate`` and ``baseFolderTemplate`` options, respectively.
+The controller automatically executes the backend with the ``--no_http`` flag, to suppress the backend's built-in HTTP server. If the ``backendLogFileTemplate`` configuration option is set, ``--no_log`` is also used to suppress user-level logs. ``--port`` is used to override the default port. ``--top_level_folder`` and a positional argument are used to set the top-level and starting data directories for the user, as specified in the ``rootFolderTemplate`` and ``baseFolderTemplate`` options, respectively.
 
 To specify additional backend flags, we recommend editing a :ref:`global backend preferences<config-backend>` file. Most commandline arguments to the backend are also recognised as configuration options. The ``additionalArgs`` field in the controller configuration file can be used for any debug options which are not, and to disable the local or global configuration files.
 
@@ -112,6 +112,12 @@ The controller assumes it is running at the root directory of your subdomain by 
         "apiAddress": "/carta/version/v3-beta/api",
         "dashboardAddress": "/carta/version/v3-beta/dashboard"
     }
+
+The example controller configuration file enables logging to ``/var/log/carta/controller.log``, but the ``logFile`` field is optional and by default the controller will log only to the console. For logging to the example logfile location to work, you must ensure that the ``/var/log/carta`` directory exists and that the user account which is used to run the server has write permission to the log file.  It is also recommended to set up log rotation for this file, to prevent it from growing indefinitely. An example logrotate configuration is provided, which you can place in ``/etc/logrotate.d/carta-controller``:
+
+.. literalinclude:: _static/config/example_logrotate
+   :language: ini
+
 
 .. _config-backend:
 
@@ -135,7 +141,7 @@ The backend configuration file must adhere to the :ref:`CARTA backend configurat
 Testing the configuration
 -------------------------
 
-To test the configuration of the controller, you can use the built-in test feature. Run ``carta-controller --verbose --test <username>`` as the ``carta`` user (or whichever user has the :ref:`added sudoers permissions<config-backend-permissions>`). ``<username>`` should be a user in the ``carta-users`` group. The expected output looks like this:
+To test the configuration of the controller, you can use the built-in test feature. Run ``carta-controller --logLevel debug --test <username>`` as the ``carta`` user (or whichever user has the :ref:`added sudoers permissions<config-backend-permissions>`). ``<username>`` should be a user in the ``carta-users`` group. The expected output looks like this:
 
 .. literalinclude:: _static/output/alicetest.txt
    :language: ansi-color

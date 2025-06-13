@@ -2,6 +2,7 @@ import * as fs from "fs";
 import {CartaExternalAuthConfig, UserMap, Verifier} from "../types";
 import jwt = require("jsonwebtoken");
 import {VerifyOptions} from "jsonwebtoken";
+import { logger } from "../util";
 
 export function populateUserMap(userMaps: Map<string, UserMap>, issuer: string | string[], filename: string) {
     const userMap = new Map<string, string>();
@@ -30,16 +31,16 @@ export function populateUserMap(userMaps: Map<string, UserMap>, issuer: string |
             // The field separator can be any amount of whitespace.
             const entry = line.match(fieldRegex);
             if (!entry) {
-                console.log(`Ignoring malformed usermap line: ${line}`);
+                logger.warning(`Ignoring malformed usermap line: ${line}`);
                 continue;
             }
 
             // Captured groups are 1-indexed (0 is the whole match)
             userMap.set(entry[1], entry[2]);
         }
-        console.log(`Updated usermap with ${userMap.size} entries`);
+        logger.info(`Updated usermap with ${userMap.size} entries`);
     } catch (e) {
-        console.log(`Error reading user table`);
+        logger.error(`Error reading user table`);
     }
 
     if (Array.isArray(issuer)) {
