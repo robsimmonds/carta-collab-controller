@@ -439,6 +439,7 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
                 id: workspaceId,
                 name: queryResult.name,
                 editable: true,
+                users: queryResult.users, 
                 ...workspaceData
             }
         });
@@ -484,7 +485,8 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
             workspace: {
                 id: workspaceId,
                 name: queryResult.name,
-                editable: queryResult.username === req.username,
+                editable: queryResult.users?.includes(req.username),
+                users: queryResult.users ?? [],
                 ...workspaceData
             }
         });
