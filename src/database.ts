@@ -707,7 +707,18 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
 	//Too messy fix it
 	
 	// Insert a new document into the workspaces collection with the new name and cloned workspace data.	
-	const insertResult = await workspacesCollection.findOneAndUpdate({users: req.username, name: newWorkspaceName}, {$set: {workspace: clonedWorkspace}, $setOnInsert: { _id: newWorkspaceId}}, {upsert: true, returnDocument: "after"});
+	const insertResult = await workspacesCollection.findOneAndUpdate(
+            {users: [req.username], name: newWorkspaceName},
+            {
+                $set: {
+                    workspace: clonedWorkspace,
+                    users: [req.username],
+                    name: newWorkspaceName
+                },
+                $setOnInsert: { _id: newWorkspaceId }
+            },
+            {upsert: true, returnDocument: "after"}
+        );
 	
 	if (insertResult.ok && insertResult.value){
 	    res.json({
