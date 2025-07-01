@@ -8,7 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph } from "./workspaceUtils";
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch } from "./workspaceUtils";
 
 
 const PREFERENCE_SCHEMA_VERSION = 2;
@@ -804,6 +804,26 @@ async function handleBranchWorkspace(req: AuthenticatedRequest, res: express.Res
     }
 }
 
+async function handleDeleteWorkspaceBranch(req, res, next) {
+    if (!req.username) return next({ statusCode: 403, message: "Invalid username" });
+    if (!workspacesCollection) return next({ statusCode: 501, message: "Database not configured" });
+
+    const { workspaceName, branchName } = req.body;
+    if (!workspaceName || !branchName) return next({ statusCode: 400, message: "Workspace name and branch name required" });
+
+    try {
+        const workspace = await workspacesCollection.findOne({ users: req.username, name: workspaceName });
+        if (!workspace) return next({ statusCode: 404, message: "Workspace not found" });
+        const workspaceId = workspace._id.toString();
+        const workspaceFolder = getWorkspaceFolder(workspaceId);
+
+        await deleteGitBranch(workspaceFolder, branchName);
+        res.json({ success: true });
+    } catch (err) {
+        return next({ statusCode: 500, message: err.message || "Failed to delete branch" });
+    }
+}
+
 async function handleShareWorkspace(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
@@ -921,6 +941,7 @@ async function handleGetWorkspaceTopology(req: AuthenticatedRequest, res: Respon
     }
 }
 
+
 export const databaseRouter = express.Router();
 
 databaseRouter.get("/preferences", authGuard, noCache, handleGetPreferences);
@@ -949,3 +970,4 @@ databaseRouter.delete("/workspace", authGuard, noCache, handleClearWorkspace);
 databaseRouter.put("/switchWorkspaceBranch", authGuard, noCache, handleSwitchWorkspaceBranch);
 databaseRouter.post("/listWorkspaceBranches", authGuard, noCache, handleListWorkspaceBranches);
 databaseRouter.post("/workspaceTopology", authGuard, noCache, handleGetWorkspaceTopology);
+databaseRouter.delete("/deleteWorkspaceBranch", authGuard, noCache, handleDeleteWorkspaceBranch);

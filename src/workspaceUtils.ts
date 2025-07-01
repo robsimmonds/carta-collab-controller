@@ -180,6 +180,17 @@ export async function getGitCommitGraph(folderPath: string): Promise<any[]> {
     });
 }
 
+/**
+ * Deletes a git branch in the given folder.
+ * Throws if the branch cannot be deleted.
+ */
+export async function deleteGitBranch(folderPath: string, branchName: string): Promise<void> {
+  // -D forces delete even if not merged; use -d for safe delete
+  await execAsync(`git branch -D "${branchName}"`, { cwd: folderPath });
+  console.log(`Deleted branch ${branchName} in ${folderPath}`);
+}
+
+
 
 
 
