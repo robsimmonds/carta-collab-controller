@@ -152,6 +152,45 @@ export async function readWorkspaceJson(folderPath: string): Promise<any> {
   return JSON.parse(jsonString);
 }
 
+/**
+ * Returns a list of commits with their hashes, parents, and refs (branches/tags)
+ */
+export async function getGitCommitGraph(folderPath: string): Promise<any[]> {
+  const { stdout } = await execAsync(
+    `git log --all --pretty=format:'%H|%P|%D|%s|%an|%ae|%ad|%BEND_OF_BODY' --date=iso`,
+    { cwd: folderPath }
+  );
+  // Each line: hash|parent(s)|refs|subject|author|email|date|bodyEND_OF_BODY
+  return stdout
+    .split('\n')
+    .filter(Boolean)
+    .map(line => {
+      const [hash, parents, refs, subject, author, email, date, ...bodyParts] = line.split('|');
+      const body = (bodyParts.join('|') || '').replace(/END_OF_BODY$/, '');
+      return {
+        hash,
+        parents: parents ? parents.split(' ') : [],
+        refs,
+        subject,
+        author,
+        email,
+        date,
+        body,
+      };
+    });
+}
+
+/**
+ * Deletes a git branch in the given folder.
+ * Throws if the branch cannot be deleted.
+ */
+export async function deleteGitBranch(folderPath: string, branchName: string): Promise<void> {
+  // -D forces delete even if not merged; use -d for safe delete
+  await execAsync(`git branch -D "${branchName}"`, { cwd: folderPath });
+  console.log(`Deleted branch ${branchName} in ${folderPath}`);
+}
+
+
 
 
 

@@ -8,7 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson } from "./workspaceUtils";
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch } from "./workspaceUtils";
 
 
 const PREFERENCE_SCHEMA_VERSION = 2;
@@ -38,8 +38,8 @@ let snippetsCollection: Collection;
 let workspacesCollection: Collection;
 
 // Helper: construct the file path for a given user's workspace.
-function getWorkspaceFolder(username: string, workspaceId: string): string {
-	return path.join(WORKSPACE_ROOT, username, workspaceId);
+function getWorkspaceFolder(workspaceId: string): string {
+	return path.join(WORKSPACE_ROOT, workspaceId);
 }
 
 
@@ -360,7 +360,7 @@ async function handleClearWorkspace(req: AuthenticatedRequest, res: Response, ne
     const workspaceId = req.body?.id;
 
     try {
-        const deleteResult = await workspacesCollection.findOneAndDelete({username: req.username, name: workspaceName});
+        const deleteResult = await workspacesCollection.findOneAndDelete({users: req.username, name: workspaceName});
         
 	if (!deleteResult.value) {
   		// No document was found to delete.
@@ -372,7 +372,7 @@ async function handleClearWorkspace(req: AuthenticatedRequest, res: Response, ne
 
 	if (deleteResult.ok && deleteResult.value) {
             // Determine the workspace folder path.
-      	    const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+      	    const workspaceFolder = getWorkspaceFolder(workspaceId);
       	    console.log("Deleting workspace folder:", workspaceFolder);
 	
 	    // Attempt to remove the workspace folder (and its .git repo) recursively.
@@ -398,7 +398,7 @@ async function handleGetWorkspaceList(req: AuthenticatedRequest, res: Response, 
     }
 
     try {
-        const workspaceList = await workspacesCollection.find({username: req.username}, {projection: {_id: 1, name: 1, "workspace.date": 1}}).toArray();
+        const workspaceList = await workspacesCollection.find({users: req.username}, {projection: {_id: 1, name: 1, "workspace.date": 1}}).toArray();
         const workspaces = workspaceList?.map(w => ({...w, id: w._id, date: w.workspace?.date})) ?? [];
         res.json({success: true, workspaces});
     } catch (err) {
@@ -421,12 +421,12 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
     }
 
     try {
-        const queryResult = await workspacesCollection.findOne({username: req.username, name: req.params.name}, {projection: {username: 0}});
+        const queryResult = await workspacesCollection.findOne({users: req.username, name: req.params.name}, {projection: {username: 0}});
         if (!queryResult) {
             return next({statusCode: 404, message: "Workspace not found"});
         }
         const workspaceId = queryResult._id.toString();
-        const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+        const workspaceFolder = getWorkspaceFolder(workspaceId);
         let workspaceData;
         try {
             workspaceData = await readWorkspaceJson(workspaceFolder);
@@ -439,6 +439,7 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
                 id: workspaceId,
                 name: queryResult.name,
                 editable: true,
+                users: queryResult.users, 
                 ...workspaceData
             }
         });
@@ -464,14 +465,15 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
 
     try {
         const objectId = Buffer.from(req.params.key, "base64url").toString("hex");
+        console.log("objectID-", objectId)
         const queryResult = await workspacesCollection.findOne({_id: new ObjectId(objectId)});
         if (!queryResult) {
-            return next({statusCode: 404, message: "Workspace not found"});
-        } else if (queryResult.username !== req.username && !queryResult.shared) {
+            return next({statusCode: 404, message: "Workspacesss not found"});
+        } else if (!queryResult.users?.includes(req.username) && !queryResult.shared) {
             return next({statusCode: 403, message: "Workspace not accessible"});
         }
         const workspaceId = queryResult._id.toString();
-        const workspaceFolder = getWorkspaceFolder(queryResult.username, workspaceId);
+        const workspaceFolder = getWorkspaceFolder( workspaceId);
         let workspaceData;
         try {
             workspaceData = await readWorkspaceJson(workspaceFolder);
@@ -483,7 +485,8 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
             workspace: {
                 id: workspaceId,
                 name: queryResult.name,
-                editable: queryResult.username === req.username,
+                editable: queryResult.users?.includes(req.username),
+                users: queryResult.users ?? [],
                 ...workspaceData
             }
         });
@@ -517,12 +520,12 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
     }
 	
     //use id instead of name for folder creation allowing name change
-    const workspaceId = new ObjectId().toString();	
+    const workspaceId = new ObjectId()
 
     let workspaceFolder: string;
     try{
     	//Compute the workspace directory path on disk.
-        workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+        workspaceFolder = getWorkspaceFolder(workspaceId.toString());
         console.log("Computed workspace folder:", workspaceFolder);
 	
 	// Create workspace if it neccessary
@@ -547,14 +550,14 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
     //Only if git functionalities successful    
     try{
 	//workspace record in the database
-        const updateResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: workspaceName}, {$set: {workspace}, $setOnInsert: { _id: workspaceId}}, {upsert: true, returnDocument: "after"});
+        const updateResult = await workspacesCollection.findOneAndUpdate({users: [req.username], name: workspaceName}, {$set: {workspace}, $setOnInsert: { _id: workspaceId}}, {upsert: true, returnDocument: "after"});
 	
 	if (updateResult.ok && updateResult.value) {
             res.json({
                 success: true,
                 workspace: {
                     ...(workspace as any),
-                    id: workspaceId, //using custom id
+                    id: workspaceId.toString(), //using custom id
                     editable: true,
                     name: workspaceName
                 }});
@@ -603,14 +606,14 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
     }
 
     try {
-        const updateResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: workspaceName}, {$set: {workspace}}, {upsert: true, returnDocument: "after"});
+        const updateResult = await workspacesCollection.findOneAndUpdate({users: req.username, name: workspaceName}, {$set: {workspace}}, {upsert: true, returnDocument: "after"});
        
        	if (!updateResult.value) {
     		return next({ statusCode: 500, message: "Workspace update failed: no document returned" });
 }
 	// Get the workspace id from the DB result and compute the workspace folder path.
         const workspaceId = updateResult.value._id.toString();
-    	const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+    	const workspaceFolder = getWorkspaceFolder(workspaceId);
     	
 	// Verify the folder exists-it should exist if the workspace is open
     	try {
@@ -670,7 +673,7 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
 
     try {
         // 1. Look up the source workspace record
-        const sourceRecord = await workspacesCollection.findOne({ username: req.username, name: sourceWorkspaceName });
+        const sourceRecord = await workspacesCollection.findOne({ users: req.username, name: sourceWorkspaceName });
         if (!sourceRecord) {
             return next({ statusCode: 404, message: "Source workspace not found" });
         }
@@ -681,13 +684,13 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
 
 	//surely we can get the workspace itself from the db?
 	const clonedWorkspace = { ...sourceRecord.workspace };
-        const newWorkspaceId = new ObjectId().toString();
+        const newWorkspaceId = new ObjectId();
         const dateStr = new Date().toISOString().replace(/[-:.TZ]/g, "");
         const newWorkspaceName = `clone_${sourceWorkspaceName}_${dateStr}`;
 
         // 2. Compute folder paths.
-        const sourceFolder = getWorkspaceFolder(req.username, sourceWorkspaceId);
-        const destinationFolder = getWorkspaceFolder(req.username, newWorkspaceId);
+        const sourceFolder = getWorkspaceFolder( sourceWorkspaceId);
+        const destinationFolder = getWorkspaceFolder(newWorkspaceId.toString());
 
 	// Ensure the destination folder does not exist.
         if (await folderExists(destinationFolder)) {
@@ -704,7 +707,18 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
 	//Too messy fix it
 	
 	// Insert a new document into the workspaces collection with the new name and cloned workspace data.	
-	const insertResult = await workspacesCollection.findOneAndUpdate({username: req.username, name: newWorkspaceName}, {$set: {workspace: clonedWorkspace}, $setOnInsert: { _id: newWorkspaceId}}, {upsert: true, returnDocument: "after"});
+	const insertResult = await workspacesCollection.findOneAndUpdate(
+            {users: [req.username], name: newWorkspaceName},
+            {
+                $set: {
+                    workspace: clonedWorkspace,
+                    users: [req.username],
+                    name: newWorkspaceName
+                },
+                $setOnInsert: { _id: newWorkspaceId }
+            },
+            {upsert: true, returnDocument: "after"}
+        );
 	
 	if (insertResult.ok && insertResult.value){
 	    res.json({
@@ -752,7 +766,7 @@ async function handleBranchWorkspace(req: AuthenticatedRequest, res: express.Res
     
     try {
         // 1. Look up the source workspace record
-        const sourceRecord = await workspacesCollection.findOne({ username: req.username, name: workspaceName });
+        const sourceRecord = await workspacesCollection.findOne({ users: req.username, name: workspaceName });
         if (!sourceRecord) {
             return next({ statusCode: 404, message: "Source workspace not found" });
         }
@@ -763,7 +777,7 @@ async function handleBranchWorkspace(req: AuthenticatedRequest, res: express.Res
 
 
 	// Compute the workspace folder.
-        const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+        const workspaceFolder = getWorkspaceFolder( workspaceId);
         if (!(await folderExists(workspaceFolder))) {
             return next({ statusCode: 404, message: "Workspace folder not found" });
         }
@@ -790,6 +804,26 @@ async function handleBranchWorkspace(req: AuthenticatedRequest, res: express.Res
     }
 }
 
+async function handleDeleteWorkspaceBranch(req, res, next) {
+    if (!req.username) return next({ statusCode: 403, message: "Invalid username" });
+    if (!workspacesCollection) return next({ statusCode: 501, message: "Database not configured" });
+
+    const { workspaceName, branchName } = req.body;
+    if (!workspaceName || !branchName) return next({ statusCode: 400, message: "Workspace name and branch name required" });
+
+    try {
+        const workspace = await workspacesCollection.findOne({ users: req.username, name: workspaceName });
+        if (!workspace) return next({ statusCode: 404, message: "Workspace not found" });
+        const workspaceId = workspace._id.toString();
+        const workspaceFolder = getWorkspaceFolder(workspaceId);
+
+        await deleteGitBranch(workspaceFolder, branchName);
+        res.json({ success: true });
+    } catch (err) {
+        return next({ statusCode: 500, message: err.message || "Failed to delete branch" });
+    }
+}
+
 async function handleShareWorkspace(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
@@ -803,9 +837,16 @@ async function handleShareWorkspace(req: AuthenticatedRequest, res: Response, ne
     if (!workspacesCollection) {
         return next({statusCode: 501, message: "Database not configured"});
     }
+    
+    // Accept a username to share with, default to current user
+    const shareWith = req.body?.username || req.username;
+    //console.log("user is ", shareWith);
 
     try {
-        const updateResult = await workspacesCollection.findOneAndUpdate({_id: new ObjectId(id)}, {$set: {shared: true}});
+        const updateResult = await workspacesCollection.findOneAndUpdate(
+            { _id: new ObjectId(id) },
+            { $addToSet: { users: shareWith } } as any
+        );
         if (updateResult.ok) {
             const shareKey = Buffer.from(id, "hex").toString("base64url");
             res.json({success: true, id, shareKey});
@@ -833,12 +874,12 @@ async function handleSwitchWorkspaceBranch(req: AuthenticatedRequest, res: expre
     }
 
     try {
-        const workspace = await workspacesCollection.findOne({ username: req.username, name: workspaceName });
+        const workspace = await workspacesCollection.findOne({ users: req.username, name: workspaceName });
         if (!workspace) {
             return next({ statusCode: 404, message: "Workspace not found" });
         }
         const workspaceId = workspace._id.toString();
-        const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+        const workspaceFolder = getWorkspaceFolder( workspaceId);
 
         await checkoutGitBranch(workspaceFolder, branchName);
 
@@ -863,12 +904,12 @@ async function handleListWorkspaceBranches(req: AuthenticatedRequest, res: expre
     }
 
     try {
-        const workspace = await workspacesCollection.findOne({ username: req.username, name: workspaceName });
+        const workspace = await workspacesCollection.findOne({ users: req.username, name: workspaceName });
         if (!workspace) {
             return next({ statusCode: 404, message: "Workspace not found" });
         }
         const workspaceId = workspace._id.toString();
-        const workspaceFolder = getWorkspaceFolder(req.username, workspaceId);
+        const workspaceFolder = getWorkspaceFolder( workspaceId);
 
         const { branches, current } = await listGitBranches(workspaceFolder);
 
@@ -878,6 +919,28 @@ async function handleListWorkspaceBranches(req: AuthenticatedRequest, res: expre
         return next({ statusCode: 500, message: err.message || "Failed to list branches" });
     }
 }
+
+async function handleGetWorkspaceTopology(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    if (!req.username) return next({ statusCode: 403, message: "Invalid username" });
+    if (!workspacesCollection) return next({ statusCode: 501, message: "Database not configured" });
+
+    const workspaceName = req.body?.workspaceName;
+    if (!workspaceName) return next({ statusCode: 400, message: "Workspace name is required" });
+
+    try {
+        const workspace = await workspacesCollection.findOne({ users: req.username, name: workspaceName });
+        if (!workspace) return next({ statusCode: 404, message: "Workspace not found" });
+        const workspaceId = workspace._id.toString();
+        const workspaceFolder = getWorkspaceFolder( workspaceId);
+
+        const graph = await getGitCommitGraph(workspaceFolder);
+        res.json({ success: true, graph });
+    } catch (err) {
+        console.error("Error getting branch topology:", err);
+        return next({ statusCode: 500, message: err.message || "Failed to get branch topology" });
+    }
+}
+
 
 export const databaseRouter = express.Router();
 
@@ -906,3 +969,5 @@ databaseRouter.put("/branchWorkspace", authGuard, noCache, handleBranchWorkspace
 databaseRouter.delete("/workspace", authGuard, noCache, handleClearWorkspace);
 databaseRouter.put("/switchWorkspaceBranch", authGuard, noCache, handleSwitchWorkspaceBranch);
 databaseRouter.post("/listWorkspaceBranches", authGuard, noCache, handleListWorkspaceBranches);
+databaseRouter.post("/workspaceTopology", authGuard, noCache, handleGetWorkspaceTopology);
+databaseRouter.delete("/deleteWorkspaceBranch", authGuard, noCache, handleDeleteWorkspaceBranch);
