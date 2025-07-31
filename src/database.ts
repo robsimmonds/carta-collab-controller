@@ -8,7 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch } from "./workspaceUtils";
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch, getOrCreateUserWorktree } from "./workspaceUtils";
 
 
 const PREFERENCE_SCHEMA_VERSION = 2;
@@ -792,7 +792,11 @@ async function handleBranchWorkspace(req: AuthenticatedRequest, res: express.Res
         // The command checks out and creates a new branch in one step.
         await createGitBranch(workspaceFolder, branchName);
         console.log(`Branch "${branchName}" created in workspace "${workspaceName}" for user "${req.username}"`);
+        
+        // Immediately check out the original branch (e.g., "main") in the main workspace
+        await checkoutGitBranch(workspaceFolder, "master"); 
 
+    
     	
         res.json({
             success: true,
@@ -868,7 +872,7 @@ async function handleSwitchWorkspaceBranch(req: AuthenticatedRequest, res: expre
     }
 
     const workspaceName = req.body?.workspaceName;
-    const branchName = req.body?.branchName;
+    const branchName = req.body?.branchName.replace(/^[^ ]* /, ''); // Remove any leading "origin/" prefix like + or *
     if (!workspaceName || !branchName) {
         return next({ statusCode: 400, message: "Workspace name and branch name are required" });
     }
@@ -881,7 +885,19 @@ async function handleSwitchWorkspaceBranch(req: AuthenticatedRequest, res: expre
         const workspaceId = workspace._id.toString();
         const workspaceFolder = getWorkspaceFolder( workspaceId);
 
-        await checkoutGitBranch(workspaceFolder, branchName);
+        // Create or get the user's worktree for this branch
+        //const userWorktreePath = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+
+        let userWorktreePath: string;
+        if (branchName === "master") {
+            // Use the main workspace folder for master
+            userWorktreePath = workspaceFolder;
+        } else {
+            // Create or get the user's worktree for this branch
+            userWorktreePath = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+        }
+
+        //await checkoutGitBranch(workspaceFolder, branchName);
 
         res.json({ success: true, message: `Switched to branch "${branchName}" in workspace "${workspaceName}"` });
     } catch (err: any) {
@@ -911,7 +927,15 @@ async function handleListWorkspaceBranches(req: AuthenticatedRequest, res: expre
         const workspaceId = workspace._id.toString();
         const workspaceFolder = getWorkspaceFolder( workspaceId);
 
-        const { branches, current } = await listGitBranches(workspaceFolder);
+        const branchName = req.body?.branchName;
+
+        // Use the user's worktree for their current branch, fallback to main workspace
+        let worktreeFolder = workspaceFolder;
+        if (branchName && branchName !== "master") {
+            worktreeFolder = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+        }
+
+        const { branches, current } = await listGitBranches(worktreeFolder);
 
         res.json({ success: true, branches, current });
     } catch (err: any) {

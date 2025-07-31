@@ -190,16 +190,31 @@ export async function deleteGitBranch(folderPath: string, branchName: string): P
   console.log(`Deleted branch ${branchName} in ${folderPath}`);
 }
 
+/**
+ * Creates a git worktree for a user/branch if it doesn't exist, and returns its path.
+ * The worktree will be at: <workspaceFolder>/.worktrees/<username>/<branchName>
+ */
+export async function getOrCreateUserWorktree(
+  workspaceFolder: string,
+  username: string,
+  branchName: string
+): Promise<string> {
+  const worktreeBase = path.join(workspaceFolder, ".worktrees", username);
+  const worktreePath = path.join(worktreeBase, branchName);
 
+  // If the worktree already exists, just return it
+  if (await folderExists(worktreePath)) {
+    return worktreePath;
+  }
 
+  // Ensure the base folder exists
+  await fs.promises.mkdir(worktreeBase, { recursive: true });
 
-
-
-
-
-
-
-
-
-
-
+  // Add the worktree
+  await execAsync(
+    `git worktree add "${worktreePath}" "${branchName}"`,
+    { cwd: workspaceFolder }
+  );
+  console.log(`Created worktree for user ${username} branch ${branchName}: ${worktreePath}`);
+  return worktreePath;
+}
