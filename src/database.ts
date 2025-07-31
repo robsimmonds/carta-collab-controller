@@ -427,9 +427,19 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
         }
         const workspaceId = queryResult._id.toString();
         const workspaceFolder = getWorkspaceFolder(workspaceId);
+        
+        // Fet branch from query or session, default to master 
+        const branchName = typeof req.query.branchName === "string" && req.query.branchName.trim()
+            ? req.query.branchName.replace(/^[^ ]* /, '')
+            : "master";
+
         let workspaceData;
+        let folderToRead = workspaceFolder;
+        if (branchName !== "master") {
+            folderToRead = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+        }
         try {
-            workspaceData = await readWorkspaceJson(workspaceFolder);
+            workspaceData = await readWorkspaceJson(folderToRead);
         } catch (err) {
             return next({statusCode: 500, message: "Could not read workspace JSON from branch"});
         }
@@ -474,12 +484,24 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
         }
         const workspaceId = queryResult._id.toString();
         const workspaceFolder = getWorkspaceFolder( workspaceId);
+        
+        // Fetch branch from query or session, default to master 
+        const branchName = typeof req.query.branchName === "string" && req.query.branchName.trim()
+            ? req.query.branchName.replace(/^[^ ]* /, '')
+            : "master";
         let workspaceData;
+        let folderToRead = workspaceFolder;
+
+        if (branchName !== "master") {
+            folderToRead = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+        }
+
         try {
-            workspaceData = await readWorkspaceJson(workspaceFolder);
+            workspaceData = await readWorkspaceJson(folderToRead);
         } catch (err) {
             return next({statusCode: 500, message: "Could not read workspace JSON from branch"});
         }
+        
         res.json({
             success: true,
             workspace: {
@@ -591,8 +613,10 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
     const workspaceName = req.body?.workspaceName;
     const workspace = req.body?.workspace;
     const commitMessage = req.body?.commitMessage;
+    const branchName = req.body?.branchName.replace(/^[^ ]* /, '') || "master"; // Default to master if not provided
 
     console.log("COMMIT:", commitMessage);
+    console.log("BRANCH:", branchName);
 
     // Check for malformed update
     if (!workspaceName || !workspace || workspace.workspaceVersion !== WORKSPACE_SCHEMA_VERSION) {
@@ -615,16 +639,22 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
         const workspaceId = updateResult.value._id.toString();
     	const workspaceFolder = getWorkspaceFolder(workspaceId);
     	
+    // Use worktree for non-master branches
+    let saveFolder = workspaceFolder;
+    if (branchName !== "master") {
+        saveFolder = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+    }
+
 	// Verify the folder exists-it should exist if the workspace is open
     	try {
-            await ensureFolderExists(workspaceFolder);
+            await ensureFolderExists(saveFolder);
         } catch { 
             return next({ statusCode: 500, message: "Workspace folder not found" });
         }
 
 
 	// Write the updated workspace JSON file
-    	const workspaceJsonPath = path.join(workspaceFolder, "workspace.json");
+    	const workspaceJsonPath = path.join(saveFolder, "workspace.json");
     	await writeJsonFile(workspaceJsonPath, workspace);
 	console.log("Update workspace JSON written to:", workspaceJsonPath);
 	
@@ -632,7 +662,7 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
 	const finalCommitMessage = commitMessage && commitMessage.trim().length > 0
             ? commitMessage
             : `Updated workspace "${workspaceName}" by ${req.username} at ${new Date().toISOString()}`;
-       	await stageAndCommit(workspaceFolder, finalCommitMessage);
+       	await stageAndCommit(saveFolder, finalCommitMessage);
 
 	if (updateResult.ok && updateResult.value) {
             res.json({
@@ -927,7 +957,7 @@ async function handleListWorkspaceBranches(req: AuthenticatedRequest, res: expre
         const workspaceId = workspace._id.toString();
         const workspaceFolder = getWorkspaceFolder( workspaceId);
 
-        const branchName = req.body?.branchName;
+        const branchName = req.body?.branchName.replace(/^[^ ]* /, ''); // Remove any leading "origin/" prefix like + or *
 
         // Use the user's worktree for their current branch, fallback to main workspace
         let worktreeFolder = workspaceFolder;
