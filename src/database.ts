@@ -8,7 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch, getOrCreateUserWorktree } from "./workspaceUtils";
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch, getOrCreateUserWorktree, finalizeAndDeleteWorktree } from "./workspaceUtils";
 
 
 const PREFERENCE_SCHEMA_VERSION = 2;
@@ -902,8 +902,12 @@ async function handleSwitchWorkspaceBranch(req: AuthenticatedRequest, res: expre
     }
 
     const workspaceName = req.body?.workspaceName;
-    const branchName = req.body?.branchName.replace(/^[^ ]* /, ''); // Remove any leading "origin/" prefix like + or *
-    if (!workspaceName || !branchName) {
+    const branchName = req.body?.newBranch.replace(/^[^ ]* /, ''); // Remove any leading "origin/" prefix like + or *
+    const prevBranch = req.body?.prevBranch.replace(/^[^ ]* /, '');
+
+    console.log("PREV BRANCH:", prevBranch);
+
+    if (!workspaceName || !branchName || !prevBranch) {
         return next({ statusCode: 400, message: "Workspace name and branch name are required" });
     }
 
@@ -917,6 +921,17 @@ async function handleSwitchWorkspaceBranch(req: AuthenticatedRequest, res: expre
 
         // Create or get the user's worktree for this branch
         //const userWorktreePath = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+
+        // If switching from a previous branch, finalize and delete its worktree
+        if (prevBranch && prevBranch !== branchName && prevBranch !== "master") {
+            const prevWorktreePath = await getOrCreateUserWorktree(workspaceFolder, req.username, prevBranch);
+            await finalizeAndDeleteWorktree(
+                workspaceFolder,
+                prevWorktreePath,
+                prevBranch,
+                `Sync changes from ${prevBranch} before switching to ${branchName}`
+            );
+        }
 
         let userWorktreePath: string;
         if (branchName === "master") {

@@ -218,3 +218,28 @@ export async function getOrCreateUserWorktree(
   console.log(`Created worktree for user ${username} branch ${branchName}: ${worktreePath}`);
   return worktreePath;
 }
+
+/**
+ * Commits and pushes worktree changes, then deletes the worktree.
+ */
+export async function finalizeAndDeleteWorktree(
+  workspaceFolder: string,
+  worktreePath: string,
+  branchName: string,
+  commitMessage: string = "Sync worktree changes"
+): Promise<void> {
+  // Commit any changes in the worktree
+  //await stageAndCommit(worktreePath, commitMessage);
+
+  // Push changes to the branch in the main repo
+  await execAsync(`git push origin ${branchName}`, { cwd: worktreePath }).catch(() => {});
+
+  // Remove the worktree
+  await execAsync(`git worktree remove "${worktreePath}"`, { cwd: workspaceFolder });
+  // Optionally, delete the worktree folder if not removed
+  try {
+    await fs.promises.rm(worktreePath, { recursive: true, force: true });
+  } catch (err) {
+    console.error("Failed to remove worktree folder:", err);
+  }
+}
