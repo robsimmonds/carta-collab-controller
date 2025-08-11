@@ -43,6 +43,9 @@ function getWorkspaceFolder(workspaceId: string): string {
 	return path.join(WORKSPACE_ROOT, workspaceId);
 }
 
+function isEditorOrOwner(users, username) {
+    return users?.some(u => u.username === username && u.role !== "viewer");
+}
 
 async function updateUsernameIndex(collection: Collection, unique: boolean) {
     const hasIndex = await collection.indexExists("username");
@@ -360,6 +363,12 @@ async function handleClearWorkspace(req: AuthenticatedRequest, res: Response, ne
     // TODO: handle CRUD with workspace ID instead of name
     const workspaceId = req.body?.id;
 
+    const workspaceDoc = await workspacesCollection.findOne({"users.username": req.username, name: workspaceName});
+    if (!workspaceDoc || !isEditorOrOwner(workspaceDoc.users, req.username)) {
+        console.log("You do not have permission to delete this workspace" )
+        return next({statusCode: 403, message: "You do not have permission to delete this workspace"});
+    }
+
     try {
         const deleteResult = await workspacesCollection.findOneAndDelete({"users.username": req.username, name: workspaceName});
         
@@ -429,7 +438,7 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
         const workspaceId = queryResult._id.toString();
         const workspaceFolder = getWorkspaceFolder(workspaceId);
         
-        // Fet branch from query or session, default to master 
+        // Fet branch from query or session, default to master (REMOVE THIS LATER?)
         const branchName = typeof req.query.branchName === "string" && req.query.branchName.trim()
             ? req.query.branchName.replace(/^[^ ]* /, '')
             : "master";
@@ -447,14 +456,18 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
 
         const editable = queryResult.users?.some(u => u.username === req.username && u.role !== "viewer");
         console.log("Editable:", editable);
-        console.log(queryResult.users)
+        //console.log(queryResult.users)
+        console.log("users: ",queryResult.users?.map(u => u.username) )
+        console.log("roles: ",queryResult.users?.map(u => u.role) )
+
         res.json({
             success: true,
             workspace: {
                 id: workspaceId,
                 name: queryResult.name,
                 editable,
-                users:queryResult.users.username ?? [], 
+                users:queryResult.users?.map(u => u.username)  ?? [], 
+                roles:queryResult.users?.map(u => u.role)  ?? [],
                 ...workspaceData
             }
         });
@@ -490,7 +503,7 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
         const workspaceId = queryResult._id.toString();
         const workspaceFolder = getWorkspaceFolder( workspaceId);
         
-        // Fetch branch from query or session, default to master 
+        // Fetch branch from query or session, default to master (REMOVE THIS LATER?)
         const branchName = typeof req.query.branchName === "string" && req.query.branchName.trim()
             ? req.query.branchName.replace(/^[^ ]* /, '')
             : "master";
@@ -516,7 +529,8 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
                 name: queryResult.name,
                 editable,
                 //editable: queryResult.users?.includes(req.username),
-                users: queryResult.users.username  ?? [],
+                users: queryResult.users?.map(u => u.username)   ?? [],
+                roles:queryResult.users?.map(u => u.role)  ?? [],
                 ...workspaceData
             }
         });
@@ -641,6 +655,12 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
         return next({statusCode: 400, message: "Malformed workspace update"});
     }
 
+    const workspaceDoc = await workspacesCollection.findOne({"users.username": req.username, name: workspaceName});
+    if (!workspaceDoc || !isEditorOrOwner(workspaceDoc.users, req.username)) {
+        console.log("You do not have permission to edit this workspace" )
+        return next({statusCode: 403, message: "You do not have permission to edit this workspace"});
+    }
+
     try {
         const updateResult = await workspacesCollection.findOneAndUpdate({"users.username": req.username, name: workspaceName}, {$set: {workspace}}, {upsert: true, returnDocument: "after"});
        
@@ -675,7 +695,7 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
             ? commitMessage
             : `Updated workspace "${workspaceName}" by ${req.username} at ${new Date().toISOString()}`;
        	await stageAndCommit(saveFolder, finalCommitMessage);
-
+        
 	if (updateResult.ok && updateResult.value) {
             res.json({
                 success: true,
@@ -713,6 +733,12 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
 	return next({statusCode: 400, message: "Workspace name required"});
     }
 
+    const sourceRecord = await workspacesCollection.findOne({ "users.username": req.username, name: sourceWorkspaceName });
+    if (!sourceRecord || !isEditorOrOwner(sourceRecord.users, req.username)) {
+        console.log("You do not have permission to clone this workspace" )
+        return next({ statusCode: 403, message: "You do not have permission to clone this workspace" });
+    }
+    
     try {
         // 1. Look up the source workspace record
         const sourceRecord = await workspacesCollection.findOne({ "users.username": req.username, name: sourceWorkspaceName });
@@ -806,6 +832,12 @@ async function handleBranchWorkspace(req: AuthenticatedRequest, res: express.Res
     }
     console.log("check 2 complete");
     
+    const sourceRecord = await workspacesCollection.findOne({ "users.username": req.username, name: workspaceName });
+    if (!sourceRecord || !isEditorOrOwner(sourceRecord.users, req.username)) {
+        console.log("You do not have permission to branch this workspace" )
+        return next({ statusCode: 403, message: "You do not have permission to branch this workspace" });
+    }
+
     try {
         // 1. Look up the source workspace record
         const sourceRecord = await workspacesCollection.findOne({ "users.username": req.username, name: workspaceName });
