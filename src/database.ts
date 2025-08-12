@@ -455,6 +455,8 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
         }
 
         const editable = queryResult.users?.some(u => u.username === req.username && u.role !== "viewer");
+        const u_role = queryResult.users?.find(u => u.username === req.username)?.role;
+        console.log("role: ", u_role);
         console.log("Editable:", editable);
         //console.log(queryResult.users)
         console.log("users: ",queryResult.users?.map(u => u.username) )
@@ -466,8 +468,10 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
                 id: workspaceId,
                 name: queryResult.name,
                 editable,
-                users:queryResult.users?.map(u => u.username)  ?? [], 
+                users:queryResult.users?.map(u => u.username)  ?? [],
+                user: req.username, // Current user's username 
                 roles:queryResult.users?.map(u => u.role)  ?? [],
+                role: u_role,
                 ...workspaceData
             }
         });
@@ -522,6 +526,8 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
         
         // Set editable if user is owner or editor
         const editable = queryResult.users?.some(u => u.username === req.username && u.role !== "viewer");
+        const u_role = queryResult.users?.find(u => u.username === req.username)?.role;
+        console.log("role: ", u_role);
         res.json({
             success: true,
             workspace: {
@@ -530,7 +536,9 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
                 editable,
                 //editable: queryResult.users?.includes(req.username),
                 users: queryResult.users?.map(u => u.username)   ?? [],
+                user: req.username, // Current user's username 
                 roles:queryResult.users?.map(u => u.role)  ?? [],
+                role: u_role,
                 ...workspaceData
             }
         });
@@ -597,7 +605,7 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
     const users = [{ username: req.username, role: "owner" }];
 
 	//workspace record in the database
-    const updateResult = await workspacesCollection.findOneAndUpdate({"users.username": req.username, name: workspaceName}, {$set: {workspace, users}, $setOnInsert: { _id: workspaceId}}, {upsert: true, returnDocument: "after"});
+    const updateResult = await workspacesCollection.findOneAndUpdate({"users.username": req.username, name: workspaceName}, {$set: {workspace, users}, $setOnInsert: { _id: workspaceId, name: workspaceName}}, {upsert: true, returnDocument: "after"});
 	
 	if (updateResult.ok && updateResult.value) {
             res.json({
@@ -607,7 +615,10 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
                     id: workspaceId.toString(), //using custom id
                     editable: true,
                     name: workspaceName,
-                    users // return users array with owner
+                    users: [req.username], // return users array with owner
+                    user: req.username, // Current user's username
+                    role: "owner", // return role of the creator
+                    roles: ["owner"] // return roles array with owner
                 }});
             return;
 	} else {
@@ -663,7 +674,7 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
 
     try {
         const updateResult = await workspacesCollection.findOneAndUpdate({"users.username": req.username, name: workspaceName}, {$set: {workspace}}, {upsert: true, returnDocument: "after"});
-       
+        
        	if (!updateResult.value) {
     		return next({ statusCode: 500, message: "Workspace update failed: no document returned" });
 }
@@ -695,6 +706,12 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
             ? commitMessage
             : `Updated workspace "${workspaceName}" by ${req.username} at ${new Date().toISOString()}`;
        	await stageAndCommit(saveFolder, finalCommitMessage);
+    
+    // To get the users and roles
+    const queryResult = await workspacesCollection.findOne({"users.username": req.username, name: req.params.name}, {projection: {username: 0}});
+        if (!queryResult) {
+            return next({statusCode: 404, message: "Workspace not found"});
+        }
         
 	if (updateResult.ok && updateResult.value) {
             res.json({
@@ -703,7 +720,11 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
                     ...(workspace as any),
                     id: updateResult.value._id.toString(),
                     editable: true,
-                    name: workspaceName
+                    name: workspaceName,
+                    users: queryResult.users?.map(u => u.username)  ?? [], // return users array with owner
+                    user: req.username, // Current user's username
+                    role: "owner", // return role of the creator
+                    roles: queryResult.roles?.map(u => u.username)  ?? [] // return roles array with owner
                 }});
             return;
         } else {
@@ -793,10 +814,15 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
       	        success: true,
       	        workspace: {
                     ...(clonedWorkspace as any),
-     		    id: newWorkspaceId,
+                    id: newWorkspaceId,
                     editable: true,
-                    name: newWorkspaceName
-      	        }
+                    name: newWorkspaceName,
+                    users: [req.username], // return users array with owner
+                    user: req.username, // Current user's username
+                    role: "owner", // return role of the creator
+                    roles: ["owner"] // return roles array with owner
+      	        } 
+
 	    });
 	    return
 	} else{
@@ -1059,6 +1085,35 @@ async function handleGetWorkspaceTopology(req: AuthenticatedRequest, res: Respon
     }
 }
 
+async function handleChangeUserRole(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    if (!req.username) return next({ statusCode: 403, message: "Invalid username" });
+    if (!workspacesCollection) return next({ statusCode: 501, message: "Database not configured" });
+    console.log("Handle change user role");
+    const workspaceId = req.params.id;
+    const { username, role } = req.body;
+    if (!workspaceId || !username || !role) return next({ statusCode: 400, message: "Missing parameters" });
+
+    try {
+        const workspace = await workspacesCollection.findOne({ _id: new ObjectId(workspaceId) });
+        if (!workspace) return next({ statusCode: 404, message: "Workspace not found" });
+
+        // Only owner can change roles
+        const ownerEntry = workspace.users?.find(u => u.role === "owner");
+        if (!ownerEntry || ownerEntry.username !== req.username) {
+            return next({ statusCode: 403, message: "Only the owner can change user roles" });
+        }
+
+        // Update the user's role
+        await workspacesCollection.updateOne(
+            { _id: new ObjectId(workspaceId), "users.username": username },
+            { $set: { "users.$.role": role } }
+        );
+        res.json({ success: true });
+    } catch (err) {
+        verboseError(err);
+        return next({ statusCode: 500, message: err.message || "Failed to change user role" });
+    }
+}
 
 export const databaseRouter = express.Router();
 
@@ -1089,3 +1144,4 @@ databaseRouter.put("/switchWorkspaceBranch", authGuard, noCache, handleSwitchWor
 databaseRouter.post("/listWorkspaceBranches", authGuard, noCache, handleListWorkspaceBranches);
 databaseRouter.post("/workspaceTopology", authGuard, noCache, handleGetWorkspaceTopology);
 databaseRouter.delete("/deleteWorkspaceBranch", authGuard, noCache, handleDeleteWorkspaceBranch);
+databaseRouter.put("/workspace/:id/changeUserRole", authGuard, noCache, handleChangeUserRole);
