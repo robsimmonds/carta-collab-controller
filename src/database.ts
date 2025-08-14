@@ -438,16 +438,9 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
         const workspaceId = queryResult._id.toString();
         const workspaceFolder = getWorkspaceFolder(workspaceId);
         
-        // Fet branch from query or session, default to master (REMOVE THIS LATER?)
-        const branchName = typeof req.query.branchName === "string" && req.query.branchName.trim()
-            ? req.query.branchName.replace(/^[^ ]* /, '')
-            : "master";
-
         let workspaceData;
         let folderToRead = workspaceFolder;
-        if (branchName !== "master") {
-            folderToRead = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
-        }
+        
         try {
             workspaceData = await readWorkspaceJson(folderToRead);
         } catch (err) {
@@ -507,16 +500,9 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
         const workspaceId = queryResult._id.toString();
         const workspaceFolder = getWorkspaceFolder( workspaceId);
         
-        // Fetch branch from query or session, default to master (REMOVE THIS LATER?)
-        const branchName = typeof req.query.branchName === "string" && req.query.branchName.trim()
-            ? req.query.branchName.replace(/^[^ ]* /, '')
-            : "master";
+
         let workspaceData;
         let folderToRead = workspaceFolder;
-
-        if (branchName !== "master") {
-            folderToRead = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
-        }
 
         try {
             workspaceData = await readWorkspaceJson(folderToRead);
@@ -1054,7 +1040,8 @@ async function handleListWorkspaceBranches(req: AuthenticatedRequest, res: expre
         const workspaceId = workspace._id.toString();
         const workspaceFolder = getWorkspaceFolder( workspaceId);
 
-        const branchName = req.body?.branchName.replace(/^[^ ]* /, ''); // Remove any leading "origin/" prefix like + or *
+        //const branchName = req.body?.branchName.replace(/^[^ ]* /, ''); // Remove any leading "origin/" prefix like + or *
+        const branchName = req.body?.branchName ? req.body.branchName.replace(/^[^ ]* /, '') : undefined;
 
         // Use the user's worktree for their current branch, fallback to main workspace
         let worktreeFolder = workspaceFolder;
