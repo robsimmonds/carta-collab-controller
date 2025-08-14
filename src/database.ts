@@ -8,7 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch, getOrCreateUserWorktree, finalizeAndDeleteWorktree } from "./workspaceUtils";
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch, getOrCreateUserWorktree, finalizeAndDeleteWorktree, cloneSingleBranchRepo } from "./workspaceUtils";
 import e from "express";
 
 
@@ -781,6 +781,9 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
         const sourceFolder = getWorkspaceFolder( sourceWorkspaceId);
         const destinationFolder = getWorkspaceFolder(newWorkspaceId.toString());
 
+        const branchName = req.body?.branchName.replace(/^[^ ]* /, '') || "master";
+        console.log("Branch name for clone:", branchName);
+
 	// Ensure the destination folder does not exist.
         if (await folderExists(destinationFolder)) {
             return next({ statusCode: 409, message: "Destination workspace already exists" });
@@ -788,11 +791,15 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
 
         // 3. Clone the repository.
         // Using git clone command: "git clone <sourceFolder> <destinationFolder>"
-        await cloneGitRepo(sourceFolder, destinationFolder);
+        
+        //await cloneGitRepo(sourceFolder, destinationFolder);
+
+        // Clone only the current branch
+        await cloneSingleBranchRepo(sourceFolder, destinationFolder, branchName, req.username);
+
         console.log("Workspace cloned from", sourceFolder, "to", destinationFolder);
-	console.log("All good with clones");
-       
-		
+        console.log("All good with clones");
+
 	//Too messy fix it
 	
 	// Insert a new document into the workspaces collection with the new name and cloned workspace data.	
@@ -997,7 +1004,7 @@ async function handleSwitchWorkspaceBranch(req: AuthenticatedRequest, res: expre
         // Create or get the user's worktree for this branch
         //const userWorktreePath = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
 
-        // If switching from a previous branch, finalize and delete its worktree
+        // If switching from a previous branch, finalize and delete its worktree (Does this work???)
         if (prevBranch && prevBranch !== branchName && prevBranch !== "master") {
             const prevWorktreePath = await getOrCreateUserWorktree(workspaceFolder, req.username, prevBranch);
             await finalizeAndDeleteWorktree(

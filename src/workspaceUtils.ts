@@ -101,12 +101,55 @@ export async function folderExists(folderPath: string): Promise<boolean> {
 }
 
 /**
- * Clones a git repository from source to destination.
+ * Clones a git repository from source to destination. (No worktree support here)
  */
 export async function cloneGitRepo(sourceFolder: string, destinationFolder: string): Promise<void> {
-  await execAsync(`git clone "${sourceFolder}" "${destinationFolder}"`);
-  console.log(`Cloned git repo from ${sourceFolder} to ${destinationFolder}`);
+    // Step 1: Clone entire repo (all branches, but no hardlinks)
+    await execAsync(`git clone --no-local "${sourceFolder}" "${destinationFolder}"`);
+    console.log(`Cloned full repo from ${sourceFolder} to ${destinationFolder}`);
+
+    // Step 2: Remove any worktree metadata
+    const worktreesPath = path.join(destinationFolder, ".git", "worktrees");
+    if (await folderExists(worktreesPath)) {
+        await fs.promises.rm(worktreesPath, { recursive: true, force: true });
+        console.log(`Removed .worktrees from cloned workspace: ${worktreesPath}`);
+    }
+
+    // Step 3: Checkout 'main' branch
+    await execAsync(`git -C "${destinationFolder}" checkout master`);
+    console.log(`Checked out 'master' branch in ${destinationFolder}`);
 }
+
+export async function cloneSingleBranchRepo(
+    sourceFolder: string,
+    destinationFolder: string,
+    branchName: string,
+    username?: string
+): Promise<void> {
+    let repoToClone = sourceFolder;
+
+    // If branch is from a worktree, still clone from the *main repo*, not the worktree
+    if (branchName !== "master" && username) {
+        const worktreePath = path.join(sourceFolder, ".worktrees", username, branchName);
+        if (!(await folderExists(worktreePath))) {
+            throw new Error(`Worktree for branch "${branchName}" and user "${username}" does not exist.`);
+        }
+        // Always use the main repo path for cloning, not the worktree path
+    }
+
+    // Clone as independent repo with full branch history
+    await execAsync(
+        `git clone --no-local --branch "${branchName}" --single-branch "${repoToClone}" "${destinationFolder}"`
+    );
+
+    // Optional: Rename branch to master
+    if (branchName !== "master") {
+        await execAsync(`git branch -m "${branchName}" master`, { cwd: destinationFolder });
+    }
+
+    console.log(`Cloned branch "${branchName}" into independent repo at ${destinationFolder}`);
+}
+
 
 /**
  * Creates a new git branch in the given folder.
