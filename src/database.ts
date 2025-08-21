@@ -8,7 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch, getOrCreateUserWorktree, finalizeAndDeleteWorktree, cloneSingleBranchRepo, writeWorkspaceFolder, readWorkspaceFolder } from "./workspaceUtils";
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch, getOrCreateBranchWorktree, finalizeAndDeleteWorktree, cloneSingleBranchRepo, writeWorkspaceFolder, readWorkspaceFolder } from "./workspaceUtils";
 import e from "express";
 
 
@@ -448,7 +448,7 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
         let folderToRead = workspaceFolder;
         
         if (branchName !== "master") {
-            folderToRead = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+            folderToRead = await getOrCreateBranchWorktree(workspaceFolder, branchName);
         }
         
         console.log("folder to read", folderToRead);
@@ -525,7 +525,7 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
         let folderToRead = workspaceFolder;
 
         if (branchName !== "master") {
-            folderToRead = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+            folderToRead = await getOrCreateBranchWorktree(workspaceFolder, branchName);
         }
 
         try {
@@ -702,7 +702,7 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
     console.log("Branch name for setWorkspace:", branchName);
     console.log("saveFolder before:", saveFolder);
     if (branchName !== "master") {
-        saveFolder = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+        saveFolder = await getOrCreateBranchWorktree(workspaceFolder, branchName);
     }
     console.log("saveFolder after:", saveFolder);
 	// Verify the folder exists-it should exist if the workspace is open
@@ -946,7 +946,15 @@ async function handleDeleteWorkspaceBranch(req, res, next) {
         const workspaceId = workspace._id.toString();
         const workspaceFolder = getWorkspaceFolder(workspaceId);
 
-        await deleteGitBranch(workspaceFolder, branchName);
+        if (branchName.replace(/^[^ ]* /, '') !== "master") {
+            const worktreePath = await getOrCreateBranchWorktree(workspaceFolder,branchName.replace(/^[^ ]* /, ''));
+            await finalizeAndDeleteWorktree(
+                workspaceFolder,
+                worktreePath,
+                branchName.replace(/^[^ ]* /, '')
+            );
+        }
+        await deleteGitBranch(workspaceFolder, branchName.replace(/^[^ ]* /, ''));
         res.json({ success: true });
     } catch (err) {
         return next({ statusCode: 500, message: err.message || "Failed to delete branch" });
@@ -1023,15 +1031,15 @@ async function handleSwitchWorkspaceBranch(req: AuthenticatedRequest, res: expre
         //const userWorktreePath = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
 
         // If switching from a previous branch, finalize and delete its worktree (Does this work???)
-        if (prevBranch && prevBranch !== branchName && prevBranch !== "master") {
-            const prevWorktreePath = await getOrCreateUserWorktree(workspaceFolder, req.username, prevBranch);
+        /*if (prevBranch && prevBranch !== branchName && prevBranch !== "master") {
+            const prevWorktreePath = await getOrCreateBranchWorktree(workspaceFolder,prevBranch);
             await finalizeAndDeleteWorktree(
                 workspaceFolder,
                 prevWorktreePath,
                 prevBranch,
                 `Sync changes from ${prevBranch} before switching to ${branchName}`
             );
-        }
+        } */
 
         let userWorktreePath: string;
         if (branchName === "master") {
@@ -1039,7 +1047,7 @@ async function handleSwitchWorkspaceBranch(req: AuthenticatedRequest, res: expre
             userWorktreePath = workspaceFolder;
         } else {
             // Create or get the user's worktree for this branch
-            userWorktreePath = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+            userWorktreePath = await getOrCreateBranchWorktree(workspaceFolder, branchName);
         }
 
         //await checkoutGitBranch(workspaceFolder, branchName);
@@ -1078,7 +1086,7 @@ async function handleListWorkspaceBranches(req: AuthenticatedRequest, res: expre
         // Use the user's worktree for their current branch, fallback to main workspace
         let worktreeFolder = workspaceFolder;
         if (branchName && branchName !== "master") {
-            worktreeFolder = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+            worktreeFolder = await getOrCreateBranchWorktree(workspaceFolder, branchName);
         }
 
         const { branches, current } = await listGitBranches(worktreeFolder);

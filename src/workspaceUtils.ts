@@ -246,12 +246,11 @@ export async function deleteGitBranch(folderPath: string, branchName: string): P
  * Creates a git worktree for a user/branch if it doesn't exist, and returns its path.
  * The worktree will be at: <workspaceFolder>/.worktrees/<username>/<branchName>
  */
-export async function getOrCreateUserWorktree(
+export async function getOrCreateBranchWorktree(
   workspaceFolder: string,
-  username: string,
   branchName: string
 ): Promise<string> {
-  const worktreeBase = path.join(workspaceFolder, ".worktrees", username);
+  const worktreeBase = path.join(workspaceFolder, ".worktrees");
   const worktreePath = path.join(worktreeBase, branchName);
 
   // If the worktree already exists, just return it
@@ -267,7 +266,7 @@ export async function getOrCreateUserWorktree(
     `git worktree add "${worktreePath}" "${branchName}"`,
     { cwd: workspaceFolder }
   );
-  console.log(`Created worktree for user ${username} branch ${branchName}: ${worktreePath}`);
+  console.log(`Created worktree for branch ${branchName}: ${worktreePath}`);
   return worktreePath;
 }
 
