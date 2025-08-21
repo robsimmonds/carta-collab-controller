@@ -188,13 +188,22 @@ export async function listGitBranches(workspaceFolder: string): Promise<{branche
 /**
  * Reads and parses the workspace.json file from the given workspace folder.
  * Throws if the file cannot be read or parsed.
- */
+ 
 export async function readWorkspaceJson(folderPath: string): Promise<any> {
   const filePath = path.join(folderPath, "workspace.json");
   const jsonString = await fs.promises.readFile(filePath, "utf-8");
   return JSON.parse(jsonString);
 }
+*/
+export async function readJsonFile(filePath: string): Promise<any> {
+    const jsonString = await fs.promises.readFile(filePath, "utf-8");
+    return JSON.parse(jsonString);
+}
 
+export async function readWorkspaceJson(folderPath: string): Promise<any> {
+    const filePath = path.join(folderPath, "workspace.json");
+    return readJsonFile(filePath);
+}
 /**
  * Returns a list of commits with their hashes, parents, and refs (branches/tags)
  */
@@ -285,4 +294,93 @@ export async function finalizeAndDeleteWorktree(
   } catch (err) {
     console.error("Failed to remove worktree folder:", err);
   }
+}
+
+export async function writeWorkspaceFolder(workspaceFolder: string, workspace: any): Promise<void> {
+    // Write workspace metadata (excluding files and colorBlendingImages)
+    const { files, colorBlendingImages, ...metadata } = workspace;
+    await writeJsonFile(path.join(workspaceFolder, "workspace.json"), metadata);
+
+    // Write files
+    const filesFolder = path.join(workspaceFolder, "files");
+    await fs.promises.mkdir(filesFolder, { recursive: true });
+    for (const file of files ?? []) {
+        const fileFolder = path.join(filesFolder, String(file.id));
+        await fs.promises.mkdir(fileFolder, { recursive: true });
+        await writeJsonFile(path.join(fileFolder, "file.json"), file);
+
+        if (file.regionsSet) {
+            await writeJsonFile(path.join(fileFolder, "regions.json"), file.regionsSet);
+        }
+        if (file.renderConfig) {
+            await writeJsonFile(path.join(fileFolder, "renderConfig.json"), file.renderConfig);
+        }
+        if (file.contourConfig) {
+            await writeJsonFile(path.join(fileFolder, "contourConfig.json"), file.contourConfig);
+        }
+        if (file.vectorOverlayConfig) {
+            await writeJsonFile(path.join(fileFolder, "vectorOverlayConfig.json"), file.vectorOverlayConfig);
+        }
+    }
+
+    // Write colorBlendingImages
+    if (colorBlendingImages) {
+        const blendingFolder = path.join(workspaceFolder, "colorBlendingImages");
+        await fs.promises.mkdir(blendingFolder, { recursive: true });
+        for (const img of colorBlendingImages) {
+            await writeJsonFile(path.join(blendingFolder, `${img.imageListIndex}.json`), img);
+        }
+    }
+}
+
+export async function readWorkspaceFolder(workspaceFolder: string): Promise<any> {
+    const metadata = await readWorkspaceJson(workspaceFolder);
+
+    const files: any[] = [];
+    const filesFolder = path.join(workspaceFolder, "files");
+
+    if (await folderExists(filesFolder)) {
+        for (const fileId of await fs.promises.readdir(filesFolder)) {
+            const fileFolder = path.join(filesFolder, fileId);
+
+            // use readJsonFile for files
+            const file = await readJsonFile(path.join(fileFolder, "file.json"));
+
+            if (await fileExists(path.join(fileFolder, "regions.json"))) {
+                file.regionsSet = await readJsonFile(path.join(fileFolder, "regions.json"));
+            }
+            if (await fileExists(path.join(fileFolder, "renderConfig.json"))) {
+                file.renderConfig = await readJsonFile(path.join(fileFolder, "renderConfig.json"));
+            }
+            if (await fileExists(path.join(fileFolder, "contourConfig.json"))) {
+                file.contourConfig = await readJsonFile(path.join(fileFolder, "contourConfig.json"));
+            }
+            if (await fileExists(path.join(fileFolder, "vectorOverlayConfig.json"))) {
+                file.vectorOverlayConfig = await readJsonFile(path.join(fileFolder, "vectorOverlayConfig.json"));
+            }
+
+            files.push(file);
+        }
+    }
+    metadata.files = files;
+
+    // Read colorBlendingImages
+    const blendingFolder = path.join(workspaceFolder, "colorBlendingImages");
+    if (await folderExists(blendingFolder)) {
+        metadata.colorBlendingImages = [];
+        for (const imgFile of await fs.promises.readdir(blendingFolder)) {
+            metadata.colorBlendingImages.push(await readJsonFile(path.join(blendingFolder, imgFile)));
+        }
+    }
+
+    return metadata;
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+    try {
+        const stat = await fs.promises.stat(filePath);
+        return stat.isFile();
+    } catch {
+        return false;
+    }
 }

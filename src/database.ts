@@ -8,7 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch, getOrCreateUserWorktree, finalizeAndDeleteWorktree, cloneSingleBranchRepo } from "./workspaceUtils";
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch, getOrCreateUserWorktree, finalizeAndDeleteWorktree, cloneSingleBranchRepo, writeWorkspaceFolder, readWorkspaceFolder } from "./workspaceUtils";
 import e from "express";
 
 
@@ -435,25 +435,41 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
         if (!queryResult) {
             return next({statusCode: 404, message: "Workspace not found"});
         }
+
         const workspaceId = queryResult._id.toString();
         const workspaceFolder = getWorkspaceFolder(workspaceId);
+
+        const branchName = typeof req.query.branchName === "string" && req.query.branchName.trim()
+            ? req.query.branchName.replace(/^[^ ]* /, '')
+            : "master";
+        console.log("branchName (byname): ", branchName);
         
         let workspaceData;
         let folderToRead = workspaceFolder;
         
+        if (branchName !== "master") {
+            folderToRead = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+        }
+        
+        console.log("folder to read", folderToRead);
+
         try {
-            workspaceData = await readWorkspaceJson(folderToRead);
+            //workspaceData = await readWorkspaceJson(folderToRead);
+            workspaceData = await readWorkspaceFolder(folderToRead);
+            //console.log(workspaceData)
         } catch (err) {
             return next({statusCode: 500, message: "Could not read workspace JSON from branch"});
         }
+        
+        //console.log(workspaceData);
 
         const editable = queryResult.users?.some(u => u.username === req.username && u.role !== "viewer");
         const u_role = queryResult.users?.find(u => u.username === req.username)?.role;
-        console.log("role: ", u_role);
-        console.log("Editable:", editable);
+        //console.log("role: ", u_role);
+        //console.log("Editable:", editable);
         //console.log(queryResult.users)
-        console.log("users: ",queryResult.users?.map(u => u.username) )
-        console.log("roles: ",queryResult.users?.map(u => u.role) )
+        //console.log("users: ",queryResult.users?.map(u => u.username) )
+        //console.log("roles: ",queryResult.users?.map(u => u.role) )
 
         res.json({
             success: true,
@@ -470,7 +486,7 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
         });
     } catch (err) {
         verboseError(err);
-        return next({statusCode: 500, message: "Problem retrieving workspace"});
+        return next({statusCode: 500, message: "Problem retrieving workspace (by name)"});
     }
 }
 
@@ -500,12 +516,21 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
         const workspaceId = queryResult._id.toString();
         const workspaceFolder = getWorkspaceFolder( workspaceId);
         
+        const branchName = typeof req.query.branchName === "string" && req.query.branchName.trim()
+            ? req.query.branchName.replace(/^[^ ]* /, '')
+            : "master";
+        console.log("branchName (bykey): ", branchName);
 
         let workspaceData;
         let folderToRead = workspaceFolder;
 
+        if (branchName !== "master") {
+            folderToRead = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
+        }
+
         try {
-            workspaceData = await readWorkspaceJson(folderToRead);
+            //workspaceData = await readWorkspaceJson(folderToRead);
+            workspaceData = await readWorkspaceFolder(folderToRead);
         } catch (err) {
             return next({statusCode: 500, message: "Could not read workspace JSON from branch"});
         }
@@ -530,7 +555,7 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
         });
     } catch (err) {
         verboseError(err);
-        return next({statusCode: 500, message: "Problem retrieving workspace"});
+        return next({statusCode: 500, message: "Problem retrieving workspace (by key)"});
     }
 }
 
@@ -573,8 +598,9 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
 	await initializeGitRepository(workspaceFolder);
 
     	// Write the workspace JSON file 
-        const workspaceJsonPath = path.join(workspaceFolder, "workspace.json");
-   	await writeJsonFile(workspaceJsonPath, workspace);
+        //const workspaceJsonPath = path.join(workspaceFolder, "workspace.json");
+   	//await writeJsonFile(workspaceJsonPath, workspace);
+    await writeWorkspaceFolder(workspaceFolder, workspace);
     	
 	// Stage and commit the file.
         const commitMessage = `Initial commit for workspace "${workspaceName}" by ${req.username}`;
@@ -653,6 +679,9 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
     }
 
     const workspaceDoc = await workspacesCollection.findOne({"users.username": req.username, name: workspaceName});
+
+    //console.log("Workspace workspaceDoc", workspaceDoc);
+
     if (!workspaceDoc || !isEditorOrOwner(workspaceDoc.users, req.username)) {
         console.log("You do not have permission to edit this workspace" )
         return next({statusCode: 403, message: "You do not have permission to edit this workspace"});
@@ -670,10 +699,12 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
     	
     // Use worktree for non-master branches
     let saveFolder = workspaceFolder;
+    console.log("Branch name for setWorkspace:", branchName);
+    console.log("saveFolder before:", saveFolder);
     if (branchName !== "master") {
         saveFolder = await getOrCreateUserWorktree(workspaceFolder, req.username, branchName);
     }
-
+    console.log("saveFolder after:", saveFolder);
 	// Verify the folder exists-it should exist if the workspace is open
     	try {
             await ensureFolderExists(saveFolder);
@@ -683,9 +714,10 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
 
 
 	// Write the updated workspace JSON file
-    	const workspaceJsonPath = path.join(saveFolder, "workspace.json");
-    	await writeJsonFile(workspaceJsonPath, workspace);
-	console.log("Update workspace JSON written to:", workspaceJsonPath);
+    //const workspaceJsonPath = path.join(saveFolder, "workspace.json");
+    //await writeJsonFile(workspaceJsonPath, workspace);
+	//console.log("Update workspace JSON written to:", workspaceJsonPath);
+    await writeWorkspaceFolder(saveFolder, workspace);
 	
 	// Stage and commit the changes.
 	const finalCommitMessage = commitMessage && commitMessage.trim().length > 0
@@ -694,9 +726,9 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
        	await stageAndCommit(saveFolder, finalCommitMessage);
     
     // To get the users and roles
-    const queryResult = await workspacesCollection.findOne({"users.username": req.username, name: req.params.name}, {projection: {username: 0}});
+    const queryResult = await workspacesCollection.findOne({"users.username": req.username, name: workspaceName}, {projection: {username: 0}});
         if (!queryResult) {
-            return next({statusCode: 404, message: "Workspace not found"});
+            return next({statusCode: 404, message: "Workspace not found for queryResult" });
         }
         
 	if (updateResult.ok && updateResult.value) {
