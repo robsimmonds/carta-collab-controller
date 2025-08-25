@@ -108,16 +108,34 @@ export async function cloneGitRepo(sourceFolder: string, destinationFolder: stri
     await execAsync(`git clone --no-local "${sourceFolder}" "${destinationFolder}"`);
     console.log(`Cloned full repo from ${sourceFolder} to ${destinationFolder}`);
 
-    // Step 2: Remove any worktree metadata
-    const worktreesPath = path.join(destinationFolder, ".git", "worktrees");
-    if (await folderExists(worktreesPath)) {
-        await fs.promises.rm(worktreesPath, { recursive: true, force: true });
-        console.log(`Removed .worktrees from cloned workspace: ${worktreesPath}`);
+    // Step 2: Create local branches for all remote branches except master and symbolic refs
+    const { stdout } = await execAsync(`git branch -r`, { cwd: destinationFolder });
+    const remoteBranches = stdout
+        .split('\n')
+        .map(line => line.trim())
+        .filter(branch =>
+            branch.startsWith('origin/') &&
+            branch !== 'origin/HEAD' &&
+            branch !== 'origin/master' &&
+            !branch.includes('->') // Exclude symbolic refs
+        );
+
+    for (const remoteBranch of remoteBranches) {
+        const branchName = remoteBranch.replace('origin/', '');
+        await execAsync(`git branch "${branchName}" "${remoteBranch}"`, { cwd: destinationFolder });
+        console.log(`Created local branch ${branchName} from ${remoteBranch}`);
     }
 
+    // Step 2: Remove any worktree metadata
+    //const worktreesPath = path.join(destinationFolder, ".git", "worktrees");
+    //if (await folderExists(worktreesPath)) {
+    //    await fs.promises.rm(worktreesPath, { recursive: true, force: true });
+    //    console.log(`Removed .worktrees from cloned workspace: ${worktreesPath}`);
+    //}
+
     // Step 3: Checkout 'main' branch
-    await execAsync(`git -C "${destinationFolder}" checkout master`);
-    console.log(`Checked out 'master' branch in ${destinationFolder}`);
+    //await execAsync(`git -C "${destinationFolder}" checkout master`);
+    //console.log(`Checked out 'master' branch in ${destinationFolder}`);
 }
 
 export async function cloneSingleBranchRepo(

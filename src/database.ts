@@ -799,8 +799,8 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
         const sourceFolder = getWorkspaceFolder( sourceWorkspaceId);
         const destinationFolder = getWorkspaceFolder(newWorkspaceId.toString());
 
-        const branchName = req.body?.branchName.replace(/^[^ ]* /, '') || "master";
-        console.log("Branch name for clone:", branchName);
+        //const branchName = req.body?.branchName.replace(/^[^ ]* /, '') || "master";
+        //console.log("Branch name for clone:", branchName);
 
 	// Ensure the destination folder does not exist.
         if (await folderExists(destinationFolder)) {
@@ -813,7 +813,9 @@ async function handleCloneWorkspace(req: AuthenticatedRequest, res: express.Resp
         //await cloneGitRepo(sourceFolder, destinationFolder);
 
         // Clone only the current branch
-        await cloneSingleBranchRepo(sourceFolder, destinationFolder, branchName, req.username);
+        //await cloneSingleBranchRepo(sourceFolder, destinationFolder, branchName, req.username);
+
+        await cloneGitRepo(sourceFolder, destinationFolder);
 
         console.log("Workspace cloned from", sourceFolder, "to", destinationFolder);
         console.log("All good with clones");
