@@ -301,11 +301,33 @@ export async function writeWorkspaceFolder(workspaceFolder: string, workspace: a
     await writeJsonFile(path.join(workspaceFolder, "workspace.json"), metadata);
 
     // Write files
+    //const filesFolder = path.join(workspaceFolder, "files");
+    //await fs.promises.mkdir(filesFolder, { recursive: true });
+    
+    // Write files only if there are changes
     const filesFolder = path.join(workspaceFolder, "files");
     await fs.promises.mkdir(filesFolder, { recursive: true });
+
+    // Get existing file IDs
+    const existingFileIds = (await fs.promises.readdir(filesFolder)).filter(f => !isNaN(Number(f)));
+
+    // Track incoming file IDs
+    const incomingFileIds = (files ?? []).map(f => String(f.id));
+
+    // Remove files that are no longer in workspace.files
+    for (const fileId of existingFileIds) {
+        if (!incomingFileIds.includes(fileId)) {
+            await fs.promises.rm(path.join(filesFolder, fileId), { recursive: true, force: true });
+        }
+    }
+    
+    // Write or update files
     for (const file of files ?? []) {
         const fileFolder = path.join(filesFolder, String(file.id));
         await fs.promises.mkdir(fileFolder, { recursive: true });
+        //await writeJsonFile(path.join(fileFolder, "file.json"), file);
+
+        // Only write file.json if changed
         await writeJsonFile(path.join(fileFolder, "file.json"), file);
 
         if (file.regionsSet) {
@@ -326,6 +348,16 @@ export async function writeWorkspaceFolder(workspaceFolder: string, workspace: a
     if (colorBlendingImages) {
         const blendingFolder = path.join(workspaceFolder, "colorBlendingImages");
         await fs.promises.mkdir(blendingFolder, { recursive: true });
+
+        // Remove old blending images not present in the new workspace
+        const existingBlendFiles = await fs.promises.readdir(blendingFolder);
+        const incomingBlendIndices = colorBlendingImages.map(img => `${img.imageListIndex}.json`);
+        for (const blendFile of existingBlendFiles) {
+            if (!incomingBlendIndices.includes(blendFile)) {
+                await fs.promises.rm(path.join(blendingFolder, blendFile), { force: true });
+            }
+        }
+
         for (const img of colorBlendingImages) {
             await writeJsonFile(path.join(blendingFolder, `${img.imageListIndex}.json`), img);
         }
