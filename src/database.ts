@@ -1151,6 +1151,36 @@ async function handleChangeUserRole(req: AuthenticatedRequest, res: Response, ne
     }
 }
 
+async function handleRemoveUserFromWorkspace(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    if (!req.username) return next({ statusCode: 403, message: "Invalid username" });
+    if (!workspacesCollection) return next({ statusCode: 501, message: "Database not configured" });
+
+    const workspaceId = req.params.id;
+    const { username } = req.body;
+    if (!workspaceId || !username) return next({ statusCode: 400, message: "Missing parameters" });
+
+    try {
+        const workspace = await workspacesCollection.findOne({ _id: new ObjectId(workspaceId) });
+        if (!workspace) return next({ statusCode: 404, message: "Workspace not found" });
+
+        // Only owner can remove users
+        const ownerEntry = workspace.users?.find(u => u.role === "owner");
+        if (!ownerEntry || ownerEntry.username !== req.username) {
+            return next({ statusCode: 403, message: "Only the owner can remove users" });
+        }
+
+        // Remove the user
+        await workspacesCollection.updateOne(
+            { _id: new ObjectId(workspaceId) },
+            { $pull: { users: { username } } }
+        );
+        res.json({ success: true });
+    } catch (err) {
+        verboseError(err);
+        return next({ statusCode: 500, message: err.message || "Failed to remove user" });
+    }
+}
+
 export const databaseRouter = express.Router();
 
 databaseRouter.get("/preferences", authGuard, noCache, handleGetPreferences);
@@ -1181,3 +1211,4 @@ databaseRouter.post("/listWorkspaceBranches", authGuard, noCache, handleListWork
 databaseRouter.post("/workspaceTopology", authGuard, noCache, handleGetWorkspaceTopology);
 databaseRouter.delete("/deleteWorkspaceBranch", authGuard, noCache, handleDeleteWorkspaceBranch);
 databaseRouter.put("/workspace/:id/changeUserRole", authGuard, noCache, handleChangeUserRole);
+databaseRouter.put("/workspace/:id/removeUser", authGuard, noCache, handleRemoveUserFromWorkspace);
