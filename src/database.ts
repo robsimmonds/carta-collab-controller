@@ -94,6 +94,14 @@ export async function initDB() {
     }
 }
 
+// Helper to update user's branch in workspace
+async function setUserBranch(workspaceId: string, username: string, branch: string) {
+    await workspacesCollection.updateOne(
+        { _id: new ObjectId(workspaceId), "users.username": username },
+        { $set: { "users.$.branch": branch } }
+    );
+}
+
 async function handleGetPreferences(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     if (!req.username) {
         return next({statusCode: 403, message: "Invalid username"});
@@ -442,13 +450,19 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
         const branchName = typeof req.query.branchName === "string" && req.query.branchName.trim()
             ? req.query.branchName.replace(/^[^ ]* /, '')
             : "master";
+        
         console.log("branchName (byname): ", branchName);
         
+        // Get user's branch from DB
+        const userBranch = queryResult.users?.find(u => u.username === req.username)?.branch || "master";
+        // Use user's branch if not overridden by query.........
+        const effectiveBranch = branchName || userBranch;
+
         let workspaceData;
         let folderToRead = workspaceFolder;
         
-        if (branchName !== "master") {
-            folderToRead = await getOrCreateBranchWorktree(workspaceFolder, branchName);
+        if (effectiveBranch !== "master") {
+            folderToRead = await getOrCreateBranchWorktree(workspaceFolder, effectiveBranch);
         }
         
         console.log("folder to read", folderToRead);
@@ -481,6 +495,7 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
                 user: req.username, // Current user's username 
                 roles:queryResult.users?.map(u => u.role)  ?? [],
                 role: u_role,
+                branch: effectiveBranch, 
                 ...workspaceData
             }
         });
@@ -521,11 +536,16 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
             : "master";
         console.log("branchName (bykey): ", branchName);
 
+        // Get user's branch from DB
+        const userBranch = queryResult.users?.find(u => u.username === req.username)?.branch || "master";
+        // Use user's branch if not overridden by query
+        const effectiveBranch = branchName || userBranch;
+
         let workspaceData;
         let folderToRead = workspaceFolder;
 
-        if (branchName !== "master") {
-            folderToRead = await getOrCreateBranchWorktree(workspaceFolder, branchName);
+        if (effectiveBranch !== "master") {
+            folderToRead = await getOrCreateBranchWorktree(workspaceFolder, effectiveBranch);
         }
 
         try {
@@ -550,6 +570,7 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
                 user: req.username, // Current user's username 
                 roles:queryResult.users?.map(u => u.role)  ?? [],
                 role: u_role,
+                branch: effectiveBranch,
                 ...workspaceData
             }
         });
@@ -948,14 +969,27 @@ async function handleDeleteWorkspaceBranch(req, res, next) {
         const workspaceId = workspace._id.toString();
         const workspaceFolder = getWorkspaceFolder(workspaceId);
 
-        if (branchName.replace(/^[^ ]* /, '') !== "master") {
-            const worktreePath = await getOrCreateBranchWorktree(workspaceFolder,branchName.replace(/^[^ ]* /, ''));
-            await finalizeAndDeleteWorktree(
-                workspaceFolder,
-                worktreePath,
-                branchName.replace(/^[^ ]* /, '')
-            );
+        // if (branchName.replace(/^[^ ]* /, '') !== "master") {
+        //     const worktreePath = await getOrCreateBranchWorktree(workspaceFolder,branchName.replace(/^[^ ]* /, ''));
+        //     await finalizeAndDeleteWorktree(
+        //         workspaceFolder,
+        //         worktreePath,
+        //         branchName.replace(/^[^ ]* /, '')
+        //     );
+        // }
+
+        // Switch users on this branch to master
+        const branchToDelete = branchName.replace(/^[^ ]* /, '');
+        if (branchToDelete !== "master") {
+            // Find users on this branch
+            const usersOnBranch = workspace.users?.filter(u => u.branch === branchToDelete) ?? [];
+            for (const user of usersOnBranch) {
+                await setUserBranch(workspaceId, user.username, "master");
+            }
+            const worktreePath = await getOrCreateBranchWorktree(workspaceFolder, branchToDelete);
+            await finalizeAndDeleteWorktree(workspaceFolder, worktreePath, branchToDelete);
         }
+
         await deleteGitBranch(workspaceFolder, branchName.replace(/^[^ ]* /, ''));
         res.json({ success: true });
     } catch (err) {
@@ -1052,6 +1086,9 @@ async function handleSwitchWorkspaceBranch(req: AuthenticatedRequest, res: expre
             userWorktreePath = await getOrCreateBranchWorktree(workspaceFolder, branchName);
         }
 
+        // Update user's branch in DB
+        await setUserBranch(workspaceId, req.username, branchName);
+        
         //await checkoutGitBranch(workspaceFolder, branchName);
 
         res.json({ success: true, message: `Switched to branch "${branchName}" in workspace "${workspaceName}"` });
@@ -1083,17 +1120,28 @@ async function handleListWorkspaceBranches(req: AuthenticatedRequest, res: expre
         const workspaceFolder = getWorkspaceFolder( workspaceId);
 
         //const branchName = req.body?.branchName.replace(/^[^ ]* /, ''); // Remove any leading "origin/" prefix like + or *
-        const branchName = req.body?.branchName ? req.body.branchName.replace(/^[^ ]* /, '') : undefined;
+        //const branchName = req.body?.branchName ? req.body.branchName.replace(/^[^ ]* /, '') : undefined;
+
+
+        // Always get the user's current branch from DB
+        const userBranch = workspace.users?.find(u => u.username === req.username)?.branch || "master";
+        console.log("User's current branch from DB:", userBranch);
 
         // Use the user's worktree for their current branch, fallback to main workspace
         let worktreeFolder = workspaceFolder;
-        if (branchName && branchName !== "master") {
-            worktreeFolder = await getOrCreateBranchWorktree(workspaceFolder, branchName);
+        if (userBranch && userBranch !== "master") {
+            worktreeFolder = await getOrCreateBranchWorktree(workspaceFolder, userBranch);
         }
 
-        const { branches, current } = await listGitBranches(worktreeFolder);
+        //const { branches, current } = await listGitBranches(worktreeFolder);
+        const { branches } = await listGitBranches(worktreeFolder);
 
-        res.json({ success: true, branches, current });
+        // Always get the user's current branch from DB
+        // const userBranch = workspace.users?.find(u => u.username === req.username)?.branch || "master";
+        // console.log("User's current branch from DB:", userBranch);
+
+
+        res.json({ success: true, branches, current: userBranch });
     } catch (err: any) {
         console.error("Error listing branches:", err);
         return next({ statusCode: 500, message: err.message || "Failed to list branches" });
