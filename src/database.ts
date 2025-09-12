@@ -8,7 +8,7 @@ import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
 import * as path from "path";
-import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch, getOrCreateBranchWorktree, finalizeAndDeleteWorktree, cloneSingleBranchRepo, writeWorkspaceFolder, readWorkspaceFolder } from "./workspaceUtils";
+import { createFolderIfNotExists, initializeGitRepository, writeJsonFile, stageAndCommit, rollbackWorkspaceFolder, ensureFolderExists, deleteWorkspaceFolder, folderExists, cloneGitRepo, createGitBranch, checkoutGitBranch, listGitBranches, readWorkspaceJson, getGitCommitGraph, deleteGitBranch, getOrCreateBranchWorktree, finalizeAndDeleteWorktree, cloneSingleBranchRepo, writeWorkspaceFolder, readWorkspaceFolder, getGitBranchCommits } from "./workspaceUtils";
 import e from "express";
 
 
@@ -1229,6 +1229,34 @@ async function handleRemoveUserFromWorkspace(req: AuthenticatedRequest, res: Res
     }
 }
 
+async function handleGetBranchCommits(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+    if (!req.username) return next({ statusCode: 403, message: "Invalid username" });
+    if (!workspacesCollection) return next({ statusCode: 501, message: "Database not configured" });
+
+    const workspaceName = req.body?.workspaceName;
+    const branchName = req.body?.branchName.replace(/^[^ ]* /, '');
+    if (!workspaceName || !branchName) return next({ statusCode: 400, message: "Workspace name and branch name are required" });
+
+    try {
+        const workspace = await workspacesCollection.findOne({ "users.username": req.username, name: workspaceName });
+        if (!workspace) return next({ statusCode: 404, message: "Workspace not found" });
+        const workspaceId = workspace._id.toString();
+        const workspaceFolder = getWorkspaceFolder(workspaceId);
+
+        // Use the branch's worktree if not master
+        let folderToRead = workspaceFolder;
+        if (branchName !== "master") {
+            folderToRead = await getOrCreateBranchWorktree(workspaceFolder, branchName);
+        }
+
+        const commits = await getGitBranchCommits(folderToRead, branchName);
+        res.json({ success: true, commits }); // Only author, date, body returned
+    } catch (err) {
+        console.error("Error getting branch commits:", err);
+        return next({ statusCode: 500, message: err.message || "Failed to get branch commits" });
+    }
+}
+
 export const databaseRouter = express.Router();
 
 databaseRouter.get("/preferences", authGuard, noCache, handleGetPreferences);
@@ -1260,3 +1288,4 @@ databaseRouter.post("/workspaceTopology", authGuard, noCache, handleGetWorkspace
 databaseRouter.delete("/deleteWorkspaceBranch", authGuard, noCache, handleDeleteWorkspaceBranch);
 databaseRouter.put("/workspace/:id/changeUserRole", authGuard, noCache, handleChangeUserRole);
 databaseRouter.put("/workspace/:id/removeUser", authGuard, noCache, handleRemoveUserFromWorkspace);
+databaseRouter.post("/branchCommits", authGuard, noCache, handleGetBranchCommits);

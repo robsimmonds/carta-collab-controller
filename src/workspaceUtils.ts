@@ -251,6 +251,32 @@ export async function getGitCommitGraph(folderPath: string): Promise<any[]> {
 }
 
 /**
+ * Returns a list of commits for a specific branch with their hashes, parents, and refs (branches/tags)
+ */
+export async function getGitBranchCommits(folderPath: string, branchName: string): Promise<any[]> {
+  const { stdout } = await execAsync(
+    `git log ${branchName} --pretty=format:'%H|%P|%D|%s|%an|%ae|%ad|%BEND_OF_BODY' --date=iso`,
+    { cwd: folderPath }
+  );
+  // Each line: hash|parent(s)|refs|subject|author|email|date|bodyEND_OF_BODY
+  return stdout
+    .split('\n')
+    .filter(Boolean)
+    .map(line => {
+      const [ , , , , author, , date, ...bodyParts] = line.split('|');
+      const body = (bodyParts.join('|') || '').replace(/END_OF_BODY$/, '');
+      return {
+        author,
+        date,
+        body,
+      };
+    })
+    .filter(commit => commit.author || commit.body); // Filter out empty commits
+}
+
+
+
+/**
  * Deletes a git branch in the given folder.
  * Throws if the branch cannot be deleted.
  */
