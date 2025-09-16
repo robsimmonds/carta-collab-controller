@@ -624,7 +624,7 @@ async function handleCreateWorkspace(req: AuthenticatedRequest, res: express.Res
     await writeWorkspaceFolder(workspaceFolder, workspace);
     	
 	// Stage and commit the file.
-        const commitMessage = `Initial commit for workspace "${workspaceName}" by ${req.username}`;
+        const commitMessage = `Workspace "${workspaceName}" created by ${req.username}`;
 	await stageAndCommit(workspaceFolder, commitMessage);
 
     } catch (fsOrGitError: any) {
@@ -741,9 +741,10 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
     await writeWorkspaceFolder(saveFolder, workspace);
 	
 	// Stage and commit the changes.
+    const authorSuffix = ` (by ${req.username})`;
 	const finalCommitMessage = commitMessage && commitMessage.trim().length > 0
-            ? commitMessage
-            : `Updated workspace "${workspaceName}" by ${req.username} at ${new Date().toISOString()}`;
+            ?  `${commitMessage}${authorSuffix}`
+            : `Updated workspace "${workspaceName}"${authorSuffix}`;
        	await stageAndCommit(saveFolder, finalCommitMessage);
     
     // To get the users and roles
