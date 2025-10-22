@@ -3,7 +3,7 @@ import Ajv from "ajv";
 import addFormats from "ajv-formats";
 import {Collection, Db, MongoClient, ObjectId} from "mongodb";
 import {authGuard} from "./auth";
-import {noCache, verboseError} from "./util";
+import {noCache, logger} from "./util";
 import {AuthenticatedRequest} from "./types";
 import {ServerConfig} from "./config";
 import * as fs from "fs";
@@ -16,8 +16,7 @@ const PREFERENCE_SCHEMA_VERSION = 2;
 const LAYOUT_SCHEMA_VERSION = 2;
 const SNIPPET_SCHEMA_VERSION = 1;
 const WORKSPACE_SCHEMA_VERSION = 0;
-//new
-//const WORKSPACE_ROOT = "../src/data/workspaces"; //file system path
+
 const WORKSPACE_ROOT = path.resolve(__dirname, "../data/workspaces"); //absolute path
 
 
@@ -25,6 +24,7 @@ const preferenceSchema = require("../config/preference_schema_2.json");
 const layoutSchema = require("../config/layout_schema_2.json");
 const snippetSchema = require("../config/snippet_schema.json");
 const workspaceSchema = require("../config/workspace_schema_1.json");
+
 const ajv = new Ajv({useDefaults: true, strictTypes: false});
 addFormats(ajv);
 const validatePreferences = ajv.compile(preferenceSchema);
@@ -51,7 +51,7 @@ async function updateUsernameIndex(collection: Collection, unique: boolean) {
     const hasIndex = await collection.indexExists("username");
     if (!hasIndex) {
         await collection.createIndex({username: 1}, {name: "username", unique});
-        console.log(`Created username index for collection ${collection.collectionName}`);
+        logger.info(`Created username index for collection ${collection.collectionName}`);
     }
 }
 
@@ -60,7 +60,7 @@ async function createOrGetCollection(db: Db, collectionName: string) {
     if (collectionExists) {
         return db.collection(collectionName);
     } else {
-        console.log(`Creating collection ${collectionName}`);
+        logger.info(`Creating collection ${collectionName}`);
         return db.createCollection(collectionName);
     }
 }
@@ -82,14 +82,14 @@ export async function initDB() {
             await updateUsernameIndex(workspacesCollection, false);
             await updateUsernameIndex(preferenceCollection, true);
 
-            console.log(`Connected to ${client.options.dbName} on ${client.options.hosts} (Authenticated: ${client.options.credentials ? 'Yes': 'No'})`);
+            logger.info(`Connected to ${client.options.dbName} on ${client.options.hosts} (Authenticated: ${client.options.credentials ? 'Yes': 'No'})`);
         } catch (err) {
-            verboseError(err);
-            console.error("Error connecting to database");
+            logger.debug(err);
+            logger.emerg("Error connecting to database");
             process.exit(1);
         }
     } else {
-        console.error("Database configuration not found");
+        logger.emerg("Database configuration not found");
         process.exit(1);
     }
 }
@@ -114,12 +114,16 @@ async function handleGetPreferences(req: AuthenticatedRequest, res: Response, ne
     try {
         const doc = await preferenceCollection.findOne({username: req.username}, {projection: {_id: 0, username: 0}});
         if (doc) {
+            const isValid = validatePreferences(doc);
+            if (!isValid) {
+                logger.warning(`Returning invalid preferences:\n${validatePreferences.errors}`);
+            }
             res.json({success: true, preferences: doc});
         } else {
             return next({statusCode: 500, message: "Problem retrieving preferences"});
         }
     } catch (err) {
-        verboseError(err);
+        logger.debug(err);
         return next({statusCode: 500, message: "Problem retrieving preferences"});
     }
 }
@@ -143,8 +147,8 @@ async function handleSetPreferences(req: AuthenticatedRequest, res: Response, ne
 
     const validUpdate = validatePreferences(update);
     if (!validUpdate) {
-        console.log(validatePreferences.errors);
-        return next({statusCode: 400, message: "Malformed preference update"});
+        logger.warning(`Rejecting invalid preference update:\n${validatePreferences.errors}`);
+        return next({statusCode: 400, message: "Invalid preference update"});
     }
 
     try {
@@ -155,7 +159,7 @@ async function handleSetPreferences(req: AuthenticatedRequest, res: Response, ne
             return next({statusCode: 500, message: "Problem updating preferences"});
         }
     } catch (err) {
-        verboseError(err);
+        logger.debug(err);
         return next({statusCode: 500, message: err.errmsg});
     }
 }
@@ -188,7 +192,7 @@ async function handleClearPreferences(req: AuthenticatedRequest, res: Response, 
             return next({statusCode: 500, message: "Problem clearing preferences"});
         }
     } catch (err) {
-        verboseError(err);
+        logger.debug(err);
         return next({statusCode: 500, message: "Problem clearing preferences"});
     }
 }
@@ -207,12 +211,16 @@ async function handleGetLayouts(req: AuthenticatedRequest, res: Response, next: 
         const layouts = {} as any;
         for (const entry of layoutList) {
             if (entry.name && entry.layout) {
+                const isValid = validateLayout(entry.layout);
+                if (!isValid) {
+                    logger.warning(`Returning invalid layout '${entry.name}':\n${validateLayout.errors}`);
+                }
                 layouts[entry.name] = entry.layout;
             }
         }
         res.json({success: true, layouts});
     } catch (err) {
-        verboseError(err);
+        logger.debug(err);
         return next({statusCode: 500, message: "Problem retrieving layouts"});
     }
 }
@@ -235,8 +243,8 @@ async function handleSetLayout(req: AuthenticatedRequest, res: Response, next: N
 
     const validUpdate = validateLayout(layout);
     if (!validUpdate) {
-        console.log(validateLayout.errors);
-        return next({statusCode: 400, message: "Malformed layout update"});
+        logger.warning(`Rejecting invalid layout update:\n${validateLayout.errors}`);
+        return next({statusCode: 400, message: "Invalid layout update"});
     }
 
     try {
@@ -247,7 +255,7 @@ async function handleSetLayout(req: AuthenticatedRequest, res: Response, next: N
             return next({statusCode: 500, message: "Problem updating layout"});
         }
     } catch (err) {
-        verboseError(err);
+        logger.debug(err);
         return next({statusCode: 500, message: err.errmsg});
     }
 }
@@ -270,7 +278,7 @@ async function handleClearLayout(req: AuthenticatedRequest, res: Response, next:
             return next({statusCode: 500, message: "Problem clearing layout"});
         }
     } catch (err) {
-        console.log(err);
+        logger.error(err);
         return next({statusCode: 500, message: "Problem clearing layout"});
     }
 }
@@ -289,12 +297,16 @@ async function handleGetSnippets(req: AuthenticatedRequest, res: Response, next:
         const snippets = {} as any;
         for (const entry of snippetList) {
             if (entry.name && entry.snippet) {
+                const isValid = validateSnippet(entry.snippet);
+                if (!isValid) {
+                    logger.warning(`Returning invalid snippet '${entry.name}':\n${validateSnippet.errors}`);
+                }
                 snippets[entry.name] = entry.snippet;
             }
         }
         res.json({success: true, snippets});
     } catch (err) {
-        verboseError(err);
+        logger.debug(err);
         return next({statusCode: 500, message: "Problem retrieving snippets"});
     }
 }
@@ -317,8 +329,8 @@ async function handleSetSnippet(req: AuthenticatedRequest, res: Response, next: 
 
     const validUpdate = validateSnippet(snippet);
     if (!validUpdate) {
-        console.log(validateSnippet.errors);
-        return next({statusCode: 400, message: "Malformed snippet update"});
+        logger.error(`Rejecting invalid snippet update:\n${validateSnippet.errors}`);
+        return next({statusCode: 400, message: "Invalid snippet update"});
     }
 
     try {
@@ -329,7 +341,7 @@ async function handleSetSnippet(req: AuthenticatedRequest, res: Response, next: 
             return next({statusCode: 500, message: "Problem updating snippet"});
         }
     } catch (err) {
-        verboseError(err);
+        logger.debug(err);
         return next({statusCode: 500, message: err.errmsg});
     }
 }
@@ -352,7 +364,7 @@ async function handleClearSnippet(req: AuthenticatedRequest, res: Response, next
             return next({statusCode: 500, message: "Problem clearing snippet"});
         }
     } catch (err) {
-        console.log(err);
+        logger.error(err);
         return next({statusCode: 500, message: "Problem clearing snippet"});
     }
 }
@@ -401,7 +413,7 @@ async function handleClearWorkspace(req: AuthenticatedRequest, res: Response, ne
             return next({statusCode: 500, message: "Problem clearing workspace"});
         }
     } catch (err) {
-        console.log(err);
+        logger.error(err);
         return next({statusCode: 500, message: "Problem clearing workspace"});
     }
 }
@@ -420,7 +432,7 @@ async function handleGetWorkspaceList(req: AuthenticatedRequest, res: Response, 
         const workspaces = workspaceList?.map(w => ({...w, id: w._id, date: w.workspace?.date})) ?? [];
         res.json({success: true, workspaces});
     } catch (err) {
-        verboseError(err);
+        logger.debug(err);
         return next({statusCode: 500, message: "Problem retrieving workspaces"});
     }
 }
@@ -442,6 +454,7 @@ async function handleGetWorkspaceByName(req: AuthenticatedRequest, res: Response
         const queryResult = await workspacesCollection.findOne({"users.username": req.username, name: req.params.name}, {projection: {username: 0}});
         if (!queryResult) {
             return next({statusCode: 404, message: "Workspace not found"});
+
         }
 
         const workspaceId = queryResult._id.toString();
@@ -527,6 +540,7 @@ async function handleGetWorkspaceByKey(req: AuthenticatedRequest, res: Response,
             return next({statusCode: 404, message: "Workspacesss not found"});
         } else if (!queryResult.users?.includes(req.username) && !queryResult.shared) {
             return next({statusCode: 403, message: "Workspace not accessible"});
+
         }
         const workspaceId = queryResult._id.toString();
         const workspaceFolder = getWorkspaceFolder( workspaceId);
@@ -695,8 +709,8 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
 
     const validUpdate = validateWorkspace(workspace);
     if (!validUpdate) {
-        console.log(validateWorkspace.errors);
-        return next({statusCode: 400, message: "Malformed workspace update"});
+        logger.error(`Rejecting invalid workspace update:\n${validateWorkspace.errors}`);
+        return next({statusCode: 400, message: "Invalid workspace update"});
     }
 
     const workspaceDoc = await workspacesCollection.findOne({"users.username": req.username, name: workspaceName});
@@ -771,8 +785,7 @@ async function handleSetWorkspace(req: AuthenticatedRequest, res: Response, next
             return next({statusCode: 500, message: "Problem updating workspace"});
         }
     } catch (err) {
-        console.error("Error in handleSetWorkspace:", err);
-    	return next({ statusCode: 500, message: err.message || "Failed to save workspace" });
+
     }
 }
 
@@ -1033,7 +1046,7 @@ async function handleShareWorkspace(req: AuthenticatedRequest, res: Response, ne
             return next({statusCode: 500, message: "Problem sharing workspace"});
         }
     } catch (err) {
-        verboseError(err);
+        logger.debug(err);
         return next({statusCode: 500, message: err.errmsg});
     }
 }
@@ -1277,8 +1290,9 @@ databaseRouter.post("/share/workspace/:id", authGuard, noCache, handleShareWorks
 databaseRouter.get("/list/workspaces", authGuard, noCache, handleGetWorkspaceList);
 databaseRouter.get("/workspace/key/:key", authGuard, noCache, handleGetWorkspaceByKey);
 databaseRouter.get("/workspace/:name", authGuard, noCache, handleGetWorkspaceByName);
+
 databaseRouter.put("/setWorkspace", authGuard, noCache, handleSetWorkspace);
-//new
+
 databaseRouter.put("/createWorkspace", authGuard, noCache, handleCreateWorkspace);
 databaseRouter.put("/cloneWorkspace", authGuard, noCache, handleCloneWorkspace);
 databaseRouter.put("/branchWorkspace", authGuard, noCache, handleBranchWorkspace);
